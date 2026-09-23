@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="robots" content="noindex,nofollow" />
+  <title>DE Power Desk</title>
+  <link rel="stylesheet" href="/static/style.css?v=5.0.0" />
+  <script src="/static/plotly.min.js"></script>
+</head>
+<body data-refresh="__REFRESH_SECONDS__">
+<header class="top">
+  <div class="wrap">
+    <div class="brand"><h1>DE Power Desk</h1><span>ENTSO-E · DE-LU · 15-min MTU · Zeiten Europe/Berlin</span></div>
+    <div class="status" aria-live="polite"><span class="dot" id="statusDot"></span><span id="statusText">lädt…</span></div>
+    <span class="chip warn hidden" id="authChip" title="DASHBOARD_USERNAME/PASSWORD in Render setzen"><span class="ico">!</span>Öffentlich ohne Login</span>
+    <div class="controls">
+      <input type="date" id="day" aria-label="Liefertag" />
+      <button class="btn" id="today">Heute</button>
+      <label class="toggle"><input type="checkbox" id="auto" checked /> Auto</label>
+      <button class="btn primary" id="refresh">Aktualisieren</button>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="signals" aria-label="Signale">
+    <article class="sig" id="sigRes">
+      <div class="sig-head"><span class="sig-label">EE-Ist vs. DA-Prognose</span><span class="tag" data-tag></span></div>
+      <div class="sig-value" data-value>—</div>
+      <div class="sig-sub" data-sub></div>
+      <div class="sig-foot" data-foot></div>
+    </article>
+    <article class="sig" id="sigRev">
+      <div class="sig-head"><span class="sig-label">EE-Revision nächste 4 h</span><span class="tag" data-tag></span></div>
+      <div class="sig-value" data-value>—</div>
+      <div class="sig-sub" data-sub></div>
+      <div class="sig-foot" data-foot></div>
+    </article>
+    <article class="sig" id="sigResid">
+      <div class="sig-head"><span class="sig-label">Residuallast vs. DA</span><span class="tag" data-tag></span></div>
+      <div class="sig-value" data-value>—</div>
+      <div class="sig-sub" data-sub></div>
+      <div class="sig-foot" data-foot></div>
+    </article>
+    <article class="sig" id="sigFlow">
+      <div class="sig-head"><span class="sig-label">Netto-Import physisch</span><span class="tag" data-tag></span></div>
+      <div class="sig-value" data-value>—</div>
+      <div class="sig-sub" data-sub></div>
+      <div class="sig-foot" data-foot></div>
+    </article>
+    <article class="sig" id="sigOut">
+      <div class="sig-head"><span class="sig-label">Kraftwerke DE nicht verfügbar</span><span class="tag" data-tag></span></div>
+      <div class="sig-value" data-value>—</div>
+      <div class="sig-sub" data-sub></div>
+      <div class="sig-foot" data-foot></div>
+    </article>
+    <article class="sig" id="sigSys">
+      <div class="sig-head"><span class="sig-label">Systembilanz / reBAP</span><span class="tag" data-tag></span></div>
+      <div class="sig-value" data-value>—</div>
+      <div class="sig-sub" data-sub></div>
+      <div class="sig-foot" data-foot></div>
+    </article>
+  </section>
+
+  <section class="grid">
+    <article class="panel" id="pRes">
+      <div class="panel-head">
+        <div><h2>Erneuerbare: Ist vs. Prognosen</h2><p>Ist (A75) gegen DA-Prognose (A01, D-1 18:00), ID-Stand (A40, D 08:00) und laufende Prognose (A18). Balken: Ist − DA.</p></div>
+        <div class="panel-tools"><div class="seg" id="resTech" role="group" aria-label="Technologie">
+          <button aria-pressed="true" data-v="RES">Gesamt</button><button aria-pressed="false" data-v="Solar">Solar</button><button aria-pressed="false" data-v="Wind Onshore">Onshore</button><button aria-pressed="false" data-v="Wind Offshore">Offshore</button>
+        </div></div>
+      </div>
+      <div class="chart tall" id="chRes"></div>
+      <div class="metrics" id="mRes"></div>
+    </article>
+
+    <article class="panel" id="pLoad">
+      <div class="panel-head">
+        <div><h2>Last &amp; Residuallast</h2><p>Residuallast = Last − Solar − Wind. Vergleich immer DA gegen DA (Last A65/A01, EE A69/A01). Balken: Ist − DA.</p></div>
+      </div>
+      <div class="chart tall" id="chLoad"></div>
+      <div class="metrics" id="mLoad"></div>
+    </article>
+
+    <article class="panel wide" id="pFlow">
+      <div class="panel-head">
+        <div><h2>Grenzflüsse DE-LU</h2><p>Physisch (A11) vs. DA-Fahrplan (A09/A01) vs. Gesamtfahrplan inkl. Intraday (A09/A05). Positiv = Import nach DE-LU. Intraday-XB = Gesamt − DA; ungeplant (Ringflüsse, Regelenergie) = physisch − Gesamt.</p></div>
+        <div class="panel-tools"><select id="flowBorder" aria-label="Grenze"><option value="TOTAL">Summe alle Grenzen</option></select></div>
+      </div>
+      <div class="chart" id="chFlow"></div>
+      <div class="tablewrap"><table id="tFlow"></table></div>
+      <div class="sources" id="srcFlow"></div>
+    </article>
+
+    <article class="panel wide" id="pOut">
+      <div class="panel-head">
+        <div><h2>Kraftwerksverfügbarkeit (REMIT / ENTSO-E 15.1)</h2><p>A80-Blockmeldungen plus A77-Anlagenmeldungen ohne Blockmeldung (z. B. Windparks). Pro Einheit zählt die größte gleichzeitig gemeldete Einschränkung. Δ 24 h = Stand jetzt vs. gleicher Zeitpunkt gestern.</p></div>
+        <div class="panel-tools"><div class="seg" id="outZone" role="group" aria-label="Zone">
+          <button aria-pressed="true" data-v="DE_LU">DE-LU</button><button aria-pressed="false" data-v="FR">FR</button><button aria-pressed="false" data-v="NL">NL</button><button aria-pressed="false" data-v="BE">BE</button>
+        </div></div>
+      </div>
+      <div class="tablewrap"><table id="tZones"></table></div>
+      <div class="chart short" id="chOut"></div>
+      <h3 style="font-size:13px;margin:14px 0 0">Neu oder geändert in den letzten 24 h</h3>
+      <div class="tablewrap scroll" id="recentWrap"><table id="tRecent"></table></div>
+      <details class="method" id="allNotices">
+        <summary>Alle Meldungen des Tages</summary>
+        <div class="filters">
+          <select id="fZone" aria-label="Zone"><option value="">Alle Zonen</option><option>DE_LU</option><option>FR</option><option>NL</option><option>BE</option></select>
+          <select id="fType" aria-label="Art"><option value="">Geplant + ungeplant</option><option value="forced">Nur ungeplant (A54)</option><option value="planned">Nur geplant (A53)</option></select>
+          <select id="fState" aria-label="Status"><option value="">Alle Status</option><option value="active">Aktiv</option><option value="upcoming">Beginnt heute</option><option value="ended">Beendet</option></select>
+          <input type="search" id="fText" placeholder="Anlage / Brennstoff suchen" />
+          <span class="count" id="fCount"></span>
+        </div>
+        <div class="tablewrap scroll"><table id="tNotices"></table></div>
+      </details>
+      <div class="sources" id="srcOut"></div>
+    </article>
+
+    <article class="panel wide" id="pSys">
+      <div class="panel-head">
+        <div><h2>Systembilanz, reBAP &amp; Regelenergie</h2><p>Bilanz: ENTSO-E A86 (MWh je 15 min, negativ = System kurz). reBAP: A85. aFRR/mFRR deutschlandweit: netztransparenz.de, falls konfiguriert – sonst ENTSO-E A24, dort fehlt Amprion.</p></div>
+      </div>
+      <div class="chart tall" id="chSys"></div>
+      <div class="metrics" id="mSys"></div>
+      <div class="sources" id="srcSys"></div>
+    </article>
+  </section>
+
+  <footer>
+    Quellen: <a href="https://transparency.entsoe.eu/" rel="noreferrer">ENTSO-E Transparency Platform</a>; optional <a href="https://www.netztransparenz.de/" rel="noreferrer">netztransparenz.de</a>.
+    Fehlende Daten werden nie als 0 dargestellt. Historische ENTSO-E-Daten können revidiert werden. Keine Handelsempfehlung.
+    <span id="version"></span>
+  </footer>
+</main>
+<script src="/static/app.js?v=5.0.0"></script>
+</body>
+</html>

@@ -1,0 +1,35 @@
+services:
+  - type: web
+    name: de-power-desk
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: ENTSOE_API_KEY
+        sync: false
+      - key: ENTSOE_ENDPOINT_URL
+        value: https://web-api.tp.entsoe.eu/api
+      - key: ENTSOE_REFRESH_SECONDS
+        value: "300"
+      - key: ENTSOE_CACHE_SECONDS
+        value: "240"
+      - key: ENTSOE_CACHE_MAX_ENTRIES
+        value: "256"
+      - key: ENTSOE_HTTP_TIMEOUT
+        value: "35"
+      - key: ENTSOE_MAX_REQUESTS_PER_MINUTE
+        value: "300"
+      # Strongly recommended: without these the dashboard (and your ENTSO-E
+      # request budget) is open to anyone who finds the URL.
+      - key: DASHBOARD_USERNAME
+        sync: false
+      - key: DASHBOARD_PASSWORD
+        sync: false
+      # Optional: Germany-wide NRV-Saldo and aFRR/mFRR incl. Amprion.
+      # Free credentials: https://extranet.netztransparenz.de (OAuth client).
+      - key: NTP_CLIENT_ID
+        sync: false
+      - key: NTP_CLIENT_SECRET
+        sync: false
