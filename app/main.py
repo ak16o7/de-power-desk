@@ -46,6 +46,8 @@ UPSTREAM_MAX_REQUESTS_PER_MINUTE = max(30, min(380, int(os.getenv("ENTSOE_MAX_RE
 DASHBOARD_USERNAME = os.getenv("DASHBOARD_USERNAME", "").strip()
 DASHBOARD_PASSWORD = os.getenv("DASHBOARD_PASSWORD", "")
 AUTH_ENABLED = bool(DASHBOARD_USERNAME and DASHBOARD_PASSWORD)
+# Set DASHBOARD_PUBLIC_OK=true to run deliberately without login and hide the UI warning.
+PUBLIC_OK = os.getenv("DASHBOARD_PUBLIC_OK", "").strip().lower() in ("1", "true", "yes")
 
 AREAS = {
     "DE": "10Y1001A1001A83F",
@@ -1624,7 +1626,7 @@ def index():
 
 @app.get("/health")
 def health():
-    return {"ok": True, "version": VERSION, "configured": bool(API_KEY), "auth_enabled": AUTH_ENABLED,
+    return {"ok": True, "version": VERSION, "configured": bool(API_KEY), "auth_enabled": AUTH_ENABLED, "public_ok": PUBLIC_OK,
             "netztransparenz": ntp.configured(), "time": datetime.now(BERLIN).isoformat()}
 
 

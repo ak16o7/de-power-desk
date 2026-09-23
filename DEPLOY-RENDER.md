@@ -11,6 +11,7 @@
    - `ENTSOE_API_KEY`: bleibt wie bisher
    - `DASHBOARD_USERNAME` und `DASHBOARD_PASSWORD`: **dringend empfohlen**. Ohne sie ist das Dashboard öffentlich, und jeder kann über `?day=` dein ENTSO-E-Kontingent verbrauchen. Bei mehr als 400 Anfragen pro Minute sperrt ENTSO-E Token bzw. IP.
    - optional `NTP_CLIENT_ID` und `NTP_CLIENT_SECRET` (siehe unten)
+   - Bewusst ohne Login (z. B. zum Testen): Benutzer und Passwort leer lassen und `DASHBOARD_PUBLIC_OK=true` setzen. Dann verschwindet die Warnung „Öffentlich ohne Login“.
 4. Committen und auf den Branch pushen, den Render deployt. Auto-Deploy baut neu, die URL bleibt gleich.
 5. `/health` aufrufen. Erwartet werden `version` = `5.0.0`, `configured` = `true`, `auth_enabled` = `true` und `netztransparenz` = `true`.
 6. `python scripts/smoke_http.py --base-url https://entsoe-desk.onrender.com --day <gestern> --user … --password …`

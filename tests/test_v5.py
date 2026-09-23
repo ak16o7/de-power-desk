@@ -230,6 +230,14 @@ class GuardTests(unittest.TestCase):
         h = TestClient(m.app).get('/health').json()
         self.assertIn('auth_enabled', h)
         self.assertIn('netztransparenz', h)
+        self.assertIn('public_ok', h)
+
+    def test_public_ok_flag_from_env(self):
+        import importlib, os
+        with patch.dict(os.environ, {'DASHBOARD_PUBLIC_OK': 'true'}):
+            self.assertEqual(os.getenv('DASHBOARD_PUBLIC_OK', '').strip().lower() in ('1', 'true', 'yes'), True)
+        with patch.object(m, 'PUBLIC_OK', True):
+            self.assertTrue(TestClient(m.app).get('/health').json()['public_ok'])
 
 
 if __name__ == '__main__':

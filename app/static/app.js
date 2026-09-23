@@ -396,7 +396,7 @@
     window.matchMedia('(prefers-color-scheme: light)').addEventListener?.('change', () => Object.values(RENDER).forEach((f) => f()));
     try {
       const h = await getJSON('/health', 30000);
-      $('authChip').classList.toggle('hidden', !!h.auth_enabled);
+      $('authChip').classList.toggle('hidden', !!h.auth_enabled || !!h.public_ok);
       $('version').textContent = `· v${h.version}${h.netztransparenz ? ' · netztransparenz.de aktiv' : ''}`;
     } catch (_) { /* panels report their own errors */ }
     setInterval(tick, 5000);
