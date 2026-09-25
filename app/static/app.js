@@ -27,6 +27,22 @@
     return d.toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Berlin' });
   };
   const todayBerlin = () => new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Berlin' });
+  // "MTU 17:30 · 40 min alt": age = now − end of that quarter-hour. The status
+  // bar only says when the SERVER built the panel; this says how old the data is.
+  const ageText = (end) => {
+    const mins = Math.round((Date.now() - end) / 60e3);
+    return Number.isFinite(mins) && mins >= 0 ? `· ${mins} min alt` : '';
+  };
+  const mtu = (iso) => {
+    if (!iso) return 'MTU —';
+    const live = ($('day').value || todayBerlin()) === todayBerlin();
+    const end = Date.parse(iso) + 900e3;
+    // data-end lets tick() keep the age current between panel reloads.
+    return live && Number.isFinite(end)
+      ? `MTU ${hhmm(iso)} <span class="muted age" data-end="${end}" title="Minuten seit Ende dieser Viertelstunde">${ageText(end)}</span>`
+      : `MTU ${hhmm(iso)}`;
+  };
+  const refreshAges = () => document.querySelectorAll('.age[data-end]').forEach((el) => { el.textContent = ageText(Number(el.dataset.end)); });
   const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 
   // Plotly ignores UTC offsets in date strings. Berlin wall-clock strings would
@@ -164,7 +180,7 @@
     setSig('sigRes', {
       value: mw(k.res_error_mw),
       sub: `Solar <b>${sgn(tech.Solar)}</b> · On <b>${sgn(tech['Wind Onshore'])}</b> · Off <b>${sgn(tech['Wind Offshore'])}</b><br>vs. ID-Stand 08:00: <b>${sgn(k.res_error_id_mw)}</b> MW`,
-      foot: `<span>MTU ${hhmm(k.as_of)}</span><span title="Mittel der letzten 4 MTUs; die jüngste MTU ist noch eine Schätzung">Ø 1 h ${sgn(k.res_error_1h_mw)} MW</span><span>Ø Tag ${sgn(k.day_avg_error_mw)} MW</span>${deltas(k.changes)}`,
+      foot: `<span>${mtu(k.as_of)}</span><span title="Mittel der letzten 4 MTUs; die jüngste MTU ist noch eine Schätzung">Ø 1 h ${sgn(k.res_error_1h_mw)} MW</span><span>Ø Tag ${sgn(k.day_avg_error_mw)} MW</span>${deltas(k.changes)}`,
       tag: dir(k.res_error_mw, 300, 'bear'),
     });
     const hasFwd = isNum(k.next4h_revision_avg_mw);
@@ -211,7 +227,7 @@
     setSig('sigResid', {
       value: mw(k.residual_surprise_mw),
       sub: `Residuallast <b>${fmt(k.residual_load_mw)}</b> MW<br>Last Ist − DA <b>${sgn(k.load_error_mw)}</b> MW`,
-      foot: `<span>MTU ${hhmm(k.surprise_as_of)}</span><span>Ø 1 h ${sgn(k.residual_surprise_1h_mw)} MW</span><span>Ø Tag ${sgn(k.day_avg_surprise_mw)} MW</span>`,
+      foot: `<span>${mtu(k.surprise_as_of)}</span><span>Ø 1 h ${sgn(k.residual_surprise_1h_mw)} MW</span><span>Ø Tag ${sgn(k.day_avg_surprise_mw)} MW</span>`,
       tag: dir(k.residual_surprise_mw, 500, 'bull'),
     });
     plot('chLoad', [
@@ -243,7 +259,7 @@
     setSig('sigFlow', {
       value: mw(k.net_import_mw),
       sub: `Intraday-XB <b>${sgn(k.intraday_xb_mw)}</b> · Phys. − Fahrplan <b>${sgn(k.unscheduled_mw)}</b><br>DA-Fahrplan <b>${sgn(k.da_schedule_mw)}</b> MW`,
-      foot: `<span>MTU ${hhmm(k.as_of)}</span><span>${cov.physical_series ?? 0}/${cov.expected ?? 0} Grenzen</span>${flags.length ? `<span class="flag">⚠ ${flags.map((f) => BORDER_NAMES[f.border] || f.border).join(', ')} 0 MW</span>` : ''}`,
+      foot: `<span>${mtu(k.as_of)}</span><span>${cov.physical_series ?? 0}/${cov.expected ?? 0} Grenzen</span>${flags.length ? `<span class="flag">⚠ ${flags.map((f) => BORDER_NAMES[f.border] || f.border).join(', ')} 0 MW</span>` : ''}`,
       tag: null,
     });
     const sel = $('flowBorder');
@@ -323,16 +339,20 @@
     const d = state.data.balancing;
     if (!d) return;
     const k = d.kpi || {}, s = d.series || {}, src = d.sources || {};
-    const short = k.imbalance_state === 'deficit', long = k.imbalance_state === 'surplus';
+    // Headline = freshest of A86 (x4) and −NRV-Saldo (same quantity, r ≈ −0.999);
+    // netztransparenz is usually 15–30 min ahead of the A86 German sum.
+    const nowState = k.system_now_state || k.imbalance_state;
+    const short = nowState === 'deficit', long = nowState === 'surplus';
+    const fromNrv = (k.system_now_source || '').startsWith('NRV');
     const price = k.price_mode === 'single' ? k.imbalance_price_eur_mwh : k.imbalance_price_short_eur_mwh;
     // Same-day reBAP is an operational estimate; the settled price comes later.
     const prelim = k.price_status !== 'final';
     const act = isNum(k.afrr_de_mw) ? `aFRR DE <b>${sgn(k.afrr_de_mw)}</b> MW`
       : isNum(k.afrr_partial_mw) ? `aFRR <b>${sgn(k.afrr_partial_mw)}</b> MW <span class="muted">(ohne ${esc((k.afrr_missing_areas || []).join(', '))})</span>` : 'aFRR —';
     setSig('sigSys', {
-      value: isNum(k.imbalance_volume_mwh) ? `${sgn(k.imbalance_volume_mwh)}<small>MWh</small>` : '—',
-      sub: `reBAP${prelim ? ' (vorl.)' : ''} <b>${fmt(price, NF2)}</b> €/MWh · ${short ? 'System kurz' : long ? 'System lang' : k.imbalance_state === 'balanced' ? 'ausgeglichen' : '—'}<br>${act}${isNum(k.nrv_saldo_mw) ? ` · NRV <b>${sgn(k.nrv_saldo_mw)}</b>` : ''}`,
-      foot: `<span>MTU ${hhmm(k.as_of)}</span><span>≈ ${sgn(k.imbalance_avg_mw)} MW</span><span>Ø 1 h ${sgn(k.imbalance_1h_avg_mw)} MW</span>${deltas(k.changes)}`,
+      value: isNum(k.system_now_mw) ? `${sgn(k.system_now_mw)}<small>MW</small>` : '—',
+      sub: `${short ? 'System kurz' : long ? 'System lang' : nowState === 'balanced' ? 'ausgeglichen' : '—'} · reBAP${prelim ? ' (vorl.)' : ''} <b>${fmt(price, NF2)}</b> €/MWh<br>A86 ${hhmm(k.as_of)}: <b>${sgn(k.imbalance_volume_mwh)}</b> MWh · ${act}`,
+      foot: `<span>${mtu(k.system_now_as_of || k.as_of)}</span><span title="${fromNrv ? 'Bilanz = −NRV-Saldo (netztransparenz.de); A86 folgt später' : 'Bilanz = A86 × 4'}">${fromNrv ? 'aus NRV-Saldo' : 'aus A86'}</span><span>Ø 1 h A86 ${sgn(k.imbalance_1h_avg_mw)} MW</span>${deltas(k.system_now_changes || k.changes)}`,
       tag: short ? { cls: 'bull', text: 'kurz' } : long ? { cls: 'bear', text: 'lang' } : null,
     });
 
@@ -386,12 +406,11 @@
     } finally { clearTimeout(to); }
   }
 
-  async function loadAll() {
-    if (state.loading) return;
-    state.loading = true;
+  const PANELS = Object.keys(RENDER);
+  const FRESHNESS_POLL_S = 30;
+
+  async function loadPanels(names = PANELS) {
     const day = $('day').value || todayBerlin();
-    setStatus('warn', 'lädt…');
-    const names = Object.keys(RENDER);
     await Promise.all(names.map(async (name) => {
       try {
         state.data[name] = await getJSON(`/api/${name}?day=${encodeURIComponent(day)}`);
@@ -401,28 +420,64 @@
         state.errors[name] = e.message || String(e);
       }
     }));
-    state.loading = false;
+  }
+
+  function updateStatus() {
     const failed = Object.keys(state.errors);
-    const partial = names.filter((n) => state.data[n]?.quality?.state === 'partial');
-    const now = new Date().toLocaleTimeString('de-DE', { timeZone: 'Europe/Berlin' });
-    if (failed.length) setStatus('bad', `Stand ${now} · Fehler: ${failed.join(', ')} (${state.errors[failed[0]]})`);
-    else if (partial.length) setStatus('warn', `Stand ${now} · teilweise: ${partial.join(', ')}`);
-    else setStatus('ok', `Stand ${now} · alle Quellen vollständig`);
-    state.countdown = REFRESH_S;
+    const partial = PANELS.filter((n) => state.data[n]?.quality?.state === 'partial');
+    // Last time the server rebuilt any panel; per-tile "min alt" shows data age.
+    const built = PANELS.map((n) => Date.parse(state.data[n]?.updated)).filter(Number.isFinite);
+    const stamp = built.length ? `Server-Stand ${new Date(Math.max(...built)).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Berlin' })}` : 'Server-Stand —';
+    if (failed.length) setStatus('bad', `${stamp} · Fehler: ${failed.join(', ')} (${state.errors[failed[0]]})`);
+    else if (partial.length) setStatus('warn', `${stamp} · teilweise: ${partial.join(', ')}`);
+    else setStatus('ok', `${stamp} · alle Quellen vollständig`);
+  }
+
+  async function loadAll() {
+    if (state.loading) return;
+    state.loading = true;
+    setStatus('warn', 'lädt…');
+    await loadPanels();
+    state.loading = false;
+    state.countdown = state.background ? FRESHNESS_POLL_S : REFRESH_S;
+    updateStatus();
+  }
+
+  // With the server-side refresher, poll a tiny endpoint and re-download only
+  // the panels the server has rebuilt. Without it, fall back to full reloads.
+  async function pollFreshness() {
+    try {
+      const f = await getJSON('/api/freshness', 20000);
+      state.background = !!f.background;
+      if (f.date !== ($('day').value || todayBerlin())) return loadAll();
+      const changed = PANELS.filter((n) => f.panels?.[n] && f.panels[n] !== state.data[n]?.updated);
+      if (changed.length) {
+        state.loading = true;
+        await loadPanels(changed);
+        state.loading = false;
+      }
+      updateStatus();
+    } catch (_) { /* keep the current view; next poll retries */ }
   }
 
   function setStatus(cls, text) {
     $('statusDot').className = 'dot ' + cls;
-    $('statusText').textContent = text + (isLive() && $('auto').checked && !state.loading ? ` · nächstes Update in ${Math.max(0, state.countdown)} s` : '');
+    const next = isLive() && $('auto').checked && !state.loading
+      ? (state.background ? ` · live, Prüfung in ${Math.max(0, state.countdown)} s` : ` · nächstes Update in ${Math.max(0, state.countdown)} s`)
+      : '';
+    $('statusText').textContent = text + next;
     state.lastStatus = [cls, text];
   }
   const isLive = () => ($('day').value || todayBerlin()) === todayBerlin();
 
   function tick() {
+    refreshAges();
     if (!$('auto').checked || !isLive() || state.loading) return;
     state.countdown -= 5;
-    if (state.countdown <= 0) loadAll();
-    else if (state.lastStatus) setStatus(...state.lastStatus);
+    if (state.countdown <= 0) {
+      state.countdown = state.background ? FRESHNESS_POLL_S : REFRESH_S;
+      if (state.background) pollFreshness(); else loadAll();
+    } else if (state.lastStatus) setStatus(...state.lastStatus);
   }
 
   function segment(id, key, after) {
@@ -451,6 +506,7 @@
       const h = await getJSON('/health', 30000);
       $('authChip').classList.toggle('hidden', !!h.auth_enabled || !!h.public_ok);
       $('version').textContent = `· v${h.version}${h.netztransparenz ? ' · netztransparenz.de aktiv' : ''}`;
+      state.background = !!h.background_refresh;
     } catch (_) { /* panels report their own errors */ }
     setInterval(tick, 5000);
     loadAll();

@@ -20,6 +20,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 os.environ.setdefault("ENTSOE_API_KEY", "demo-not-a-real-key")
+# Synthetic upstream only: never mix in live netztransparenz data from a local .env.
+os.environ["NTP_CLIENT_ID"] = ""
+os.environ["NTP_CLIENT_SECRET"] = ""
 
 from app import main as m  # noqa: E402
 
