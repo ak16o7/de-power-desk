@@ -1,4 +1,4 @@
-# DE Power Desk v5.2
+# DE Power Desk v5.2.1
 
 Ein Intraday-Dashboard für den deutschen Strommarkt auf Basis von ENTSO-E-Daten, optional ergänzt um netztransparenz.de. Es läuft mit FastAPI und lokal gebündeltem Plotly und wird auf Render mit Docker betrieben. Routen, Umgebungsvariablen und Deployment sind zu v4.4.1 kompatibel.
 
@@ -14,6 +14,10 @@ Ein Intraday-Dashboard für den deutschen Strommarkt auf Basis von ENTSO-E-Daten
 | **Systembilanz / reBAP** | A86-Bilanz (negativ = System kurz), reBAP (A85), aFRR, NRV-Saldo | Ob das System gerade kurz oder lang ist |
 
 Die Markierung „bullish/bearish“ ist eine einfache Desk-Heuristik: EE-Abweichung ab ±300 MW, Residuallast ab ±500 MW, Kraftwerks-Δ ab ±300 MW. Sie ist keine Handelsempfehlung.
+
+## Neu in v5.2.1
+
+- Browser-Icon (SVG, PNG 32 px, Apple-Touch 180 px, `/favicon.ico`) und Copyright-Zeile im Footer.
 
 ## Neu in v5.2 gegenüber v5.1: Datenaktualität
 
@@ -79,7 +83,7 @@ python -m uvicorn app.main:app --port 8000
 
 ```bash
 pip install -r requirements-dev.txt
-python -m unittest discover -s tests -v                                  # offline, 128 Tests
+python -m unittest discover -s tests -v                                  # offline, 132 Tests
 python scripts/live_smoke.py --env-file .env --day 2026-09-22            # echter ENTSO-E-Abgleich
 python scripts/ntp_check.py --day 2026-09-22                             # netztransparenz.de-Zugang prüfen
 python scripts/smoke_http.py --base-url https://de-power-desk.onrender.com --day 2026-09-22 --user … --password …
