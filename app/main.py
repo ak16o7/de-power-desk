@@ -4,6 +4,7 @@ import base64
 import hmac
 import io
 import json
+import logging
 import math
 import os
 import re
@@ -30,9 +31,16 @@ from fastapi.staticfiles import StaticFiles
 from app import ntp
 from app.quality import classify_notice, outage_breakdown, panel_quality
 
-VERSION = "5.0.0"
+VERSION = "5.1.0"
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR.parent / ".env")
+
+# Upstream failures are turned into per-source states for the UI. Without a log
+# line they are invisible in production, so every swallowed exception is logged
+# once (API key masked) through this logger.
+logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO").upper(),
+                    format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+LOG = logging.getLogger("de_power_desk")
 
 BERLIN = ZoneInfo("Europe/Berlin")
 UTC = timezone.utc
@@ -211,6 +219,15 @@ def xml_documents(content: bytes) -> list[bytes]:
     return [content]
 
 
+def mask_secret(text: str) -> str:
+    """Never let the ENTSO-E token reach logs or HTTP responses."""
+    return text.replace(API_KEY, "***") if API_KEY else text
+
+
+def log_upstream(context: str, exc: BaseException, level: int = logging.WARNING) -> None:
+    LOG.log(level, "%s: %s: %s", context, type(exc).__name__, mask_secret(str(exc))[:300])
+
+
 def safe_error_text(content: bytes) -> str:
     try:
         root = ET.fromstring(content)
@@ -280,11 +297,15 @@ def parse_timeseries(content: bytes) -> list[dict[str, Any]]:
             raise ValueError("Malformed ENTSO-E XML") from exc
         doc_created = text_of(root, "createdDateTime", "createddatetime")
         revision = text_of(root, "revisionNumber", "revisionnumber")
+        # Document-level docStatus (A01 intermediate, A02 final, X01 estimated).
+        # Only direct children of the root: TimeSeries may carry their own status.
+        doc_status = next((text_of(n, "value") for n in root if local_name(n.tag) == "docstatus"), None)
         for ts in elements(root, "timeseries"):
             psr_type = text_of(ts, "psrType", "psrtype")
             business_type = text_of(ts, "businessType", "businesstype")
             flow_direction = text_of(ts, "flowDirection.direction", "flowdirection.direction")
             curve_type = text_of(ts, "curveType", "curvetype")
+            unit = text_of(ts, "quantity_Measure_Unit.name", "quantity_measure_unit.name")
             in_domain = text_of(ts, "in_Domain.mRID", "in_domain.mrid", "inBiddingZone_Domain.mRID", "inbiddingzone_domain.mrid")
             out_domain = text_of(ts, "out_Domain.mRID", "out_domain.mrid", "outBiddingZone_Domain.mRID", "outbiddingzone_domain.mrid")
             is_consumption = any(local_name(n.tag) == "outbiddingzone_domain.mrid" for n in ts.iter())
@@ -337,7 +358,7 @@ def parse_timeseries(content: bytes) -> list[dict[str, Any]]:
                             "business": business_type, "direction": flow_direction, "category": category,
                             "in_domain": in_domain, "out_domain": out_domain, "resolution": resolution_txt,
                             "curve_type": curve_type, "created": doc_created, "revision": revision,
-                            "consumption": is_consumption,
+                            "consumption": is_consumption, "unit": unit, "doc_status": doc_status,
                         })
     return rows
 
@@ -497,16 +518,104 @@ def latest_revision_rows(rows: list[dict[str, Any]], identity_fields: tuple[str,
     return [item[1] for item in chosen.values()]
 
 
-def signed_quantity_series(rows: list[dict[str, Any]]) -> dict[datetime, float]:
-    """Aggregate quantities using ENTSO-E flow direction convention.
+def latest_revision_groups(rows: list[dict[str, Any]], identity_fields: tuple[str, ...],
+                           member_field: str = "direction") -> list[dict[str, Any]]:
+    """Newest revision per logical point, keeping all members of that revision.
 
-    A01 is positive / in, A02 negative / out, A03 symmetric/positive.
+    A86 publishes one MTU as separate A01/A02 series. If a revision flips the
+    direction (intermediate: surplus, final: deficit), keying the revision by
+    direction would keep BOTH and net them. Here the newest revision per
+    identity wins as a whole; duplicates inside it are collapsed per member.
     """
-    out: dict[datetime, float] = {}
+    best: dict[tuple[Any, ...], tuple[int, datetime]] = {}
     for r in rows:
-        sign = 1.0 if r.get("direction") in (None, "A01", "A03") else -1.0 if r.get("direction") == "A02" else 1.0
-        out[r["ts"]] = out.get(r["ts"], 0.0) + sign * float(r["value"])
-    return out
+        key = tuple(r.get(f) for f in identity_fields)
+        rank = _row_rank(r)
+        if key not in best or rank > best[key]:
+            best[key] = rank
+    chosen: dict[tuple[Any, ...], dict[str, Any]] = {}
+    for r in rows:
+        key = tuple(r.get(f) for f in identity_fields)
+        if _row_rank(r) == best[key]:
+            chosen[(*key, r.get(member_field))] = r
+    return list(chosen.values())
+
+
+# ENTSO-E DDD v3r4, TR 17.1.H: the total imbalance volume D is published per ISP
+# as an absolute MWh value plus an explicit indicator (surplus/deficit/balance);
+# D > 0 = surplus (system long), D < 0 = deficit (system short). The TP encodes
+# the indicator as flowDirection: A01 = surplus, A02 = deficit, A03 = balanced
+# (same mapping as entsoe-py; verified against the NRV-Saldo sign). businessType
+# A19 = "Balance energy deviation". Other business types (e.g. the separately
+# published MV-SV value) must never be summed into D.
+IMBALANCE_SIGN = {"A01": 1.0, "A02": -1.0, "A03": 0.0}
+IMBALANCE_BUSINESS = (None, "A19")
+
+
+def imbalance_volume_series(rows: list[dict[str, Any]]) -> tuple[dict[datetime, float], dict[str, list[str]]]:
+    """Signed A86 volume in MWh per MTU for ONE area. Unknown codes are dropped
+    and reported instead of being guessed as positive."""
+    out: dict[datetime, float] = {}
+    ignored: dict[str, set[str]] = {"business": set(), "direction": set(), "unit": set()}
+    for r in rows:
+        business = r.get("business")
+        if business not in IMBALANCE_BUSINESS:
+            ignored["business"].add(str(business))
+            continue
+        sign = IMBALANCE_SIGN.get(r.get("direction"))
+        if sign is None:
+            ignored["direction"].add(str(r.get("direction")))
+            continue
+        value = float(r["value"])
+        unit = (r.get("unit") or "MWH").upper()
+        if unit == "MAW":  # average MW over the ISP -> MWh
+            value *= parse_iso_duration(r.get("resolution") or "PT15M").total_seconds() / 3600
+        elif unit != "MWH":
+            ignored["unit"].add(unit)
+            continue
+        out[r["ts"]] = out.get(r["ts"], 0.0) + sign * value
+    return out, {k: sorted(v) for k, v in ignored.items() if v}
+
+
+DOC_STATUS = {"A01": "intermediate", "A02": "final", "X01": "estimated"}
+
+
+def publication_status(rows: list[dict[str, Any]], t: datetime | None) -> str | None:
+    """'final' only if every contributing document at MTU t says so; any explicit
+    intermediate/estimated flag -> 'preliminary'; no flag at all -> None."""
+    if t is None:
+        return None
+    states = {DOC_STATUS.get(r.get("doc_status")) for r in rows if r.get("ts") == t}
+    if not states:
+        return None
+    if states == {"final"}:
+        return "final"
+    if states & {"intermediate", "estimated"}:
+        return "preliminary"
+    return None
+
+
+def trailing_mean(s: dict[datetime, float], as_of: datetime | None, n: int = 4,
+                  step: timedelta = timedelta(minutes=15)) -> float | None:
+    """Mean over the last n contiguous MTUs ending at as_of; None if any is missing.
+
+    The newest MTU is the least reliable one (TR 16.1.B/C: estimated first,
+    updated with measured values later). A 1-hour mean is shown next to it."""
+    if as_of is None:
+        return None
+    vals = [s.get(as_of - i * step) for i in range(n)]
+    if any(v is None for v in vals):
+        return None
+    return statistics.mean(vals)
+
+
+PAST_DAY_CACHE_SECONDS = int(os.getenv("ENTSOE_PAST_DAY_CACHE_SECONDS", "3600"))
+
+
+def ttl_for(d: Date, base: int) -> int:
+    """Past delivery days change rarely (late revisions only); cache them longer
+    so date browsing does not burn ~115 upstream calls per 4 minutes."""
+    return max(base, PAST_DAY_CACHE_SECONDS) if d < datetime.now(BERLIN).date() else base
 
 
 def cached(key: str, ttl: int, force: bool, fn):
@@ -551,7 +660,10 @@ def fetch_renewables(day: str | None, force: bool = False) -> dict[str, Any]:
                 end,
             )
             return parse_timeseries(content)
-        except (LookupError, RuntimeError):
+        except LookupError:
+            return []
+        except RuntimeError as e:
+            log_upstream(f"A69/{process_type}", e)
             return []
 
     def work():
@@ -652,8 +764,10 @@ def fetch_renewables(day: str | None, force: bool = False) -> dict[str, Any]:
         rest_of_day = {t: v for t, v in forecast_revision.items() if t >= now} if d == now.date() else {}
         revision_avg = statistics.mean(forward.values()) if forward else None
 
+        err_1h = trailing_mean(miss_da, miss_point[0]) if miss_point else None
         payload["kpi"] = {
             "res_error_mw": round(miss_point[1], 1) if miss_point else None,
+            "res_error_1h_mw": round(err_1h, 1) if err_1h is not None else None,
             "res_error_id_mw": round(id_point[1], 1) if id_point else None,
             "as_of": miss_point[0].isoformat() if miss_point else None,
             "forecast_basis": "day-ahead",
@@ -672,7 +786,7 @@ def fetch_renewables(day: str | None, force: bool = False) -> dict[str, Any]:
         payload["freshness"] = {"actual_through": latest_timestamp(res_actual)}
         return payload
 
-    return cached(key, CACHE_SECONDS, force, work)
+    return cached(key, ttl_for(d, CACHE_SECONDS), force, work)
 
 
 def fetch_load(day: str | None, force: bool = False) -> dict[str, Any]:
@@ -696,6 +810,7 @@ def fetch_load(day: str | None, force: bool = False) -> dict[str, Any]:
         surprise = subtract_series(residual_actual, residual_da)
         rp = latest_point(residual_actual)
         sp = latest_point(surprise)
+        surprise_1h = trailing_mean(surprise, sp[0]) if sp else None
         lp = latest_point(subtract_series(actual, forecast))
         return {
             "date": d.isoformat(),
@@ -712,6 +827,7 @@ def fetch_load(day: str | None, force: bool = False) -> dict[str, Any]:
                 "residual_load_mw": rp[1] if rp else None,
                 "as_of": rp[0].isoformat() if rp else None,
                 "residual_surprise_mw": sp[1] if sp else None,
+                "residual_surprise_1h_mw": round(surprise_1h, 1) if surprise_1h is not None else None,
                 "surprise_as_of": sp[0].isoformat() if sp else None,
                 "forecast_basis": "day-ahead load − day-ahead RES",
                 "load_error_mw": round(lp[1], 1) if lp else None,
@@ -721,7 +837,7 @@ def fetch_load(day: str | None, force: bool = False) -> dict[str, Any]:
             "freshness": {"actual_through": latest_timestamp(actual)},
         }
 
-    return cached(key, CACHE_SECONDS, force, work)
+    return cached(key, ttl_for(d, CACHE_SECONDS), force, work)
 
 
 def _one_flow(doc_type: str, source: str, dest: str, start: datetime, end: datetime, contract: str | None = None) -> tuple[dict[datetime, float], str]:
@@ -733,7 +849,8 @@ def _one_flow(doc_type: str, source: str, dest: str, start: datetime, end: datet
         return values, "ok" if values else "empty"
     except LookupError:
         return {}, "no_data"
-    except Exception:
+    except Exception as e:
+        log_upstream(f"{doc_type}{'/' + contract if contract else ''} {source}->{dest}", e)
         return {}, "error"
 
 
@@ -764,10 +881,20 @@ def fetch_borders(day: str | None, neighbors: list[str], force: bool = False) ->
         neighbors = DEFAULT_NEIGHBORS
     key = f"borders:v5:{d.isoformat()}:{','.join(neighbors)}"
 
-    # A09 contract types: A01 = day-ahead, A05 = total (DA + intraday + other
-    # nominations). Physical − total = unscheduled/loop flow. Total − DA =
-    # cross-border intraday trade. Physical − DA mixes both and is kept only
-    # for backwards compatibility.
+    # A09 contract types: A01 = day-ahead, A05 = total (all horizons incl.
+    # intraday). Total − DA = cross-border intraday trade.
+    # Physical − total ("unscheduled") must be read differently per level
+    # (ENTSO-E DDD v3r4, TR 12.1.F/12.1.G):
+    # * Sum over ALL borders: loop/transit flows enter on one border and leave
+    #   on another, so they cancel. What remains is everything the commercial
+    #   schedules exclude by definition - TSO balancing-energy exchange
+    #   (IGCC/PICASSO/MARI), cross-border remedial actions, emergency
+    #   assistance - plus unintended deviations, HVDC losses (DC flows are
+    #   metered at the sending end) and data gaps.
+    # * Per border: loop/transit flows dominate, but on flow-based (Core)
+    #   borders the scheduled exchange is itself a computed decomposition of
+    #   net positions (Euphemia bilateral topology), not a traded path, so the
+    #   per-border difference is partly an allocation artefact.
     metrics = (("physical", "A11", None), ("scheduled", "A09", "A01"), ("total", "A09", "A05"))
 
     def work():
@@ -869,9 +996,16 @@ def fetch_borders(day: str | None, neighbors: list[str], force: bool = False) ->
             "total_borders": [n for n in neighbors if n in nets["total"]],
         }
         result["freshness"] = {"physical_through": latest_timestamp(totals_phys)}
+        result["methodology"] = (
+            "Positive = import into DE-LU. Intraday-XB = total schedule (A09/A05) - day-ahead schedule (A09/A01). "
+            "Physical - total schedule: summed over all borders, loop flows cancel; the remainder is cross-border "
+            "balancing energy (IGCC/PICASSO/MARI), remedial actions, emergency assistance, unintended deviation, "
+            "HVDC losses and data gaps, all of which the commercial schedules exclude by definition (TR 12.1.F). "
+            "Per border it is mostly loop/transit flow, but on flow-based Core borders the bilateral schedule is a "
+            "computed decomposition of net positions, so part of the difference is an allocation artefact.")
         return result
 
-    return cached(key, max(CACHE_SECONDS, 600), force, work)
+    return cached(key, ttl_for(d, max(CACHE_SECONDS, 600)), force, work)
 
 def _parse_outage_docs(content: bytes, zone: str, document_type: str) -> list[dict[str, Any]]:
     """Outage 3:0/4:x: dotted XML names are literal tags, not XPath paths."""
@@ -978,18 +1112,21 @@ def _fetch_outage_pages(zone: str, document_type: str, start: datetime, end: dat
             content = entsoe_request({"documentType": document_type, "biddingZone_domain": AREAS[zone], "offset": offset}, start, end)
         except LookupError:
             return rows, ("ok" if rows else "no_data"), pages
-        except Exception:
+        except Exception as e:
+            log_upstream(f"{document_type} {zone} offset={offset}", e)
             return rows, "error", pages
         pages += 1
         docs = xml_documents(content)
         try:
             parsed = _parse_outage_docs(content, zone, document_type)
-        except (ValueError, TypeError, ET.ParseError):
+        except (ValueError, TypeError, ET.ParseError) as e:
+            log_upstream(f"{document_type} {zone} parse", e)
             return rows, "parse_error", pages
         rows.extend(parsed)
         # A page below the API's 200-document cap is terminal.
         if len(docs) < 200:
             return rows, ("ok" if rows else "empty"), pages
+    LOG.warning("%s %s: outage result truncated after %d pages", document_type, zone, pages)
     return rows, "truncated", pages
 
 
@@ -1213,7 +1350,7 @@ def fetch_outages(day: str | None, force: bool = False) -> dict[str, Any]:
             "methodology": "A80 unit notices are primary. A77 plant notices are added only for production units without any A80 notice in the window, so plant-only reporters (wind parks, many CCGTs) are included without double counting. Overlapping notices for one resource contribute their maximum. Change vs 24h uses today's knowledge of both times; 'recent' uses the document's publication timestamp.",
         }
 
-    return cached(key, max(CACHE_SECONDS, 900), force, work)
+    return cached(key, ttl_for(d, max(CACHE_SECONDS, 900)), force, work)
 
 
 def _query_control_area_document(document_type: str, area: str, start: datetime, end: datetime) -> tuple[list[dict[str, Any]], str]:
@@ -1225,7 +1362,8 @@ def _query_control_area_document(document_type: str, area: str, start: datetime,
         return rows, "ok" if rows else "empty"
     except LookupError:
         return [], "no_data"
-    except Exception:
+    except Exception as e:
+        log_upstream(f"{document_type} {area}", e)
         return [], "error"
 
 
@@ -1316,9 +1454,11 @@ def _query_aggregated_bids(process_type: str, start: datetime, end: datetime, ar
         return rows, "ok" if rows else "empty"
     except LookupError:
         return [], "no_data"
-    except (ValueError, ET.ParseError):
+    except (ValueError, ET.ParseError) as e:
+        log_upstream(f"A24/{process_type} {area} parse", e)
         return [], "parse_error"
-    except Exception:
+    except Exception as e:
+        log_upstream(f"A24/{process_type} {area}", e)
         return [], "error"
 
 
@@ -1446,14 +1586,26 @@ def fetch_balancing(day: str | None, force: bool = False) -> dict[str, Any]:
         price_partial = a85_scope.endswith("(partial)")
         volume_partial = a86_scope.endswith("(partial)")
         price_rows = [] if price_partial else latest_revision_rows(price_rows_raw, ("source_area", "category", "ts"))
-        volume_rows = [] if volume_partial else latest_revision_rows(volume_rows_raw, ("source_area", "business", "direction", "ts"))
+        # Direction is NOT part of the revision identity: the newest revision of
+        # an MTU replaces all older directions (see latest_revision_groups).
+        volume_rows = [] if volume_partial else latest_revision_groups(volume_rows_raw, ("source_area", "business", "ts"))
         if a85_scope == "German control areas":
             times = set.intersection(*({r["ts"] for r in price_rows if r.get("source_area") == a} for a in BALANCING_AREAS))
             price_rows = [r for r in price_rows if r["ts"] in times]
+        a86_ignored: dict[str, dict[str, list[str]]] = {}
         if a86_scope == "German control areas":
-            imbalance_volume = add_series_complete(*(signed_quantity_series([r for r in volume_rows if r.get("source_area") == a]) for a in BALANCING_AREAS))
+            per_area = {}
+            for a in BALANCING_AREAS:
+                per_area[a], ignored = imbalance_volume_series([r for r in volume_rows if r.get("source_area") == a])
+                if ignored:
+                    a86_ignored[a] = ignored
+            imbalance_volume = add_series_complete(*(per_area[a] for a in BALANCING_AREAS))
         else:
-            imbalance_volume = signed_quantity_series(volume_rows)
+            imbalance_volume, ignored = imbalance_volume_series(volume_rows)
+            if ignored:
+                a86_ignored[a86_scope] = ignored
+        if a86_ignored:
+            LOG.warning("A86: ignored unexpected codes %s", a86_ignored)
         categories = {r.get("category") for r in price_rows}
         price_long = mean_series(price_rows, "A04") if "A04" in categories else {}
         price_short = mean_series(price_rows, "A05") if "A05" in categories else {}
@@ -1470,11 +1622,20 @@ def fetch_balancing(day: str | None, force: bool = False) -> dict[str, Any]:
         else:
             price_mode = "single" if price_single else "dual" if (price_long or price_short) else "none"
 
-        # A86 sign verified against aFRR activation: negative = system short.
+        # D > 0 surplus (long), D < 0 deficit (short); DDD v3r4 17.1.H, and
+        # cross-checked live against aFRR direction and NRV-Saldo.
         ivp = latest_point(imbalance_volume)
         imbalance_state = None
         if ivp:
             imbalance_state = "surplus" if ivp[1] > 0 else "deficit" if ivp[1] < 0 else "balanced"
+        imbalance_1h = trailing_mean(imbalance_volume, ivp[0]) if ivp else None
+        price_series_for_status = price_single or price_short or price_long
+        price_point = latest_point(price_series_for_status)
+        # Same-day reBAP/imbalance values are operational estimates; the settled
+        # reBAP follows days to weeks later as quality-assured data
+        # (netztransparenz.de). Only an explicit docStatus A02 counts as final.
+        price_status = publication_status(price_rows, price_point[0] if price_point else None)
+        volume_status = publication_status(volume_rows, ivp[0] if ivp else None)
 
         # Germany-wide activation from ENTSO-E needs all four LFAs. When one is
         # missing, expose the sum of the publishing areas explicitly labelled
@@ -1512,7 +1673,8 @@ def fetch_balancing(day: str | None, force: bool = False) -> dict[str, Any]:
         sources = {
             "12.3.E": {"state": activation_state, "label": "ENTSO-E activated balancing energy", "scope": "4 German LFA/SCA · A67/A68 aFRR · A60/A61 mFRR"},
             "A85": {"state": doc_state(price_rows_raw, a85_status, a85_scope), "label": "Imbalance price (reBAP)", "scope": a85_scope},
-            "A86": {"state": doc_state(volume_rows_raw, a86_status, a86_scope), "label": "Total imbalance volume", "scope": a86_scope},
+            "A86": {"state": doc_state(volume_rows_raw, a86_status, a86_scope), "label": "Total imbalance volume", "scope": a86_scope,
+                    **({"ignored": a86_ignored} if a86_ignored else {})},
         }
         if ntp_data is not None:
             st = ntp_data["status"]
@@ -1534,6 +1696,8 @@ def fetch_balancing(day: str | None, force: bool = False) -> dict[str, Any]:
             "kpi": {
                 "imbalance_volume_mwh": round(ivp[1], 3) if ivp else None, "imbalance_state": imbalance_state,
                 "imbalance_avg_mw": round(ivp[1] * 4, 1) if ivp else None,
+                "imbalance_1h_avg_mw": round(imbalance_1h * 4, 1) if imbalance_1h is not None else None,
+                "imbalance_status": volume_status, "price_status": price_status,
                 "as_of": ivp[0].isoformat() if ivp else None, "basis": "A86 total imbalance volume",
                 "changes": change_windows(imbalance_volume),
                 "net_activation_mw": latest_val(activation_net), "afrr_net_mw": latest_val(afrr_net), "mfrr_net_mw": latest_val(mfrr_net),
@@ -1562,10 +1726,10 @@ def fetch_balancing(day: str | None, force: bool = False) -> dict[str, Any]:
             "activation_areas": {family: {area: {"state": v["state"], "selected_processes": v["selected_processes"],
                 "up": as_points(v["up"]), "down": as_points(v["down"]), "net": as_points(v["net"])}
                 for area, v in data["areas"].items()} for family, data in (("aFRR", afrr), ("mFRR", mfrr))},
-            "note": "Imbalance: A86 MWh per 15 min, negative = system short (verified against aFRR direction). reBAP: A85. Germany-wide aFRR/mFRR comes from netztransparenz.de when configured; ENTSO-E A24 lacks Amprion, so its sum is shown only as an explicitly partial figure.",
+            "note": "Imbalance: A86 businessType A19 (total imbalance volume D), MWh per 15 min; flowDirection A01 = surplus (+, long), A02 = deficit (-, short), A03 = balanced (0); unknown codes are dropped and listed under sources.A86.ignored. reBAP: A85; same-day values are preliminary estimates, final only if docStatus = A02. Germany-wide aFRR/mFRR comes from netztransparenz.de when configured; ENTSO-E A24 lacks Amprion, so its sum is shown only as an explicitly partial figure.",
         }
 
-    return cached(key, max(CACHE_SECONDS, 600), force, work)
+    return cached(key, ttl_for(d, max(CACHE_SECONDS, 600)), force, work)
 
 app = FastAPI(
     title="ENTSO-E Desk",
@@ -1653,8 +1817,9 @@ def endpoint_guard(fn):
     except LookupError as e:
         raise HTTPException(status_code=404, detail=f"ENTSO-E: {e}")
     except Exception as e:
-        msg = str(e).replace(API_KEY, "***") if API_KEY else str(e)
-        raise HTTPException(status_code=502, detail=msg)
+        # No traceback: chained upstream exceptions may carry request URLs.
+        log_upstream("panel failed", e, logging.ERROR)
+        raise HTTPException(status_code=502, detail=mask_secret(str(e)))
 
 
 @app.get("/api/renewables")
