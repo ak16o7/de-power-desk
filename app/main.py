@@ -90,8 +90,11 @@ DEFAULT_NEIGHBORS = list(ALL_NEIGHBORS)
 BALANCING_AREAS = ["50HERTZ", "AMPRION", "TENNET_DE", "TRANSNETBW"]
 
 SESSION = requests.Session()
-SESSION.headers.update({"User-Agent": "entsoe-desk/5.0 (+desk dashboard)"})
-SESSION.mount("https://", HTTPAdapter(max_retries=Retry(
+SESSION.headers.update({"User-Agent": "entsoe-desk/5.1 (+desk dashboard)"})
+# The UI loads all panels at once (up to ~50 concurrent upstream calls: borders 12,
+# outages 8, balancing 2x8 + 4 ...); the default pool of 10 made
+# urllib3 discard and re-handshake connections under load.
+SESSION.mount("https://", HTTPAdapter(pool_connections=4, pool_maxsize=64, max_retries=Retry(
     total=2, connect=2, read=2, status=2, backoff_factor=0.35,
     status_forcelist=(429, 500, 502, 503, 504), allowed_methods=frozenset({"GET"}),
     respect_retry_after_header=True, raise_on_status=False,
@@ -824,9 +827,9 @@ def fetch_load(day: str | None, force: bool = False) -> dict[str, Any]:
                 "Residual Load Surprise": as_points(surprise),
             },
             "kpi": {
-                "residual_load_mw": rp[1] if rp else None,
+                "residual_load_mw": round(rp[1], 1) if rp else None,
                 "as_of": rp[0].isoformat() if rp else None,
-                "residual_surprise_mw": sp[1] if sp else None,
+                "residual_surprise_mw": round(sp[1], 1) if sp else None,
                 "residual_surprise_1h_mw": round(surprise_1h, 1) if surprise_1h is not None else None,
                 "surprise_as_of": sp[0].isoformat() if sp else None,
                 "forecast_basis": "day-ahead load − day-ahead RES",
@@ -884,17 +887,17 @@ def fetch_borders(day: str | None, neighbors: list[str], force: bool = False) ->
     # A09 contract types: A01 = day-ahead, A05 = total (all horizons incl.
     # intraday). Total − DA = cross-border intraday trade.
     # Physical − total ("unscheduled") must be read differently per level
-    # (ENTSO-E DDD v3r4, TR 12.1.F/12.1.G):
-    # * Sum over ALL borders: loop/transit flows enter on one border and leave
-    #   on another, so they cancel. What remains is everything the commercial
-    #   schedules exclude by definition - TSO balancing-energy exchange
-    #   (IGCC/PICASSO/MARI), cross-border remedial actions, emergency
-    #   assistance - plus unintended deviations, HVDC losses (DC flows are
-    #   metered at the sending end) and data gaps.
-    # * Per border: loop/transit flows dominate, but on flow-based (Core)
-    #   borders the scheduled exchange is itself a computed decomposition of
-    #   net positions (Euphemia bilateral topology), not a traded path, so the
-    #   per-border difference is partly an allocation artefact.
+    # (ENTSO-E DDD v3r4, TR 12.1.F/12.1.G). Commercial schedules exclude by
+    # definition: remedial actions (redispatch/countertrading), balancing-energy
+    # exchange, emergency assistance and unintended flows.
+    # * Per border: loop/transit flows dominate; on flow-based (Core) borders the
+    #   scheduled exchange is itself a computed decomposition of net positions
+    #   (Euphemia bilateral topology), so part of it is an allocation artefact.
+    # * Sum over ALL borders: loop flows cancel. Live check 23./24.09.2026: the
+    #   remainder swung by +-1.1-1.4 GW (sd) and correlated only weakly with the
+    #   NRV-Saldo (r 0.13-0.21); countertrading DE->DK1 reached 2.2 GW. It is a
+    #   mix of remedial actions, balancing exchange and publication
+    #   inconsistencies - context, not a trading signal.
     metrics = (("physical", "A11", None), ("scheduled", "A09", "A01"), ("total", "A09", "A05"))
 
     def work():
@@ -998,11 +1001,12 @@ def fetch_borders(day: str | None, neighbors: list[str], force: bool = False) ->
         result["freshness"] = {"physical_through": latest_timestamp(totals_phys)}
         result["methodology"] = (
             "Positive = import into DE-LU. Intraday-XB = total schedule (A09/A05) - day-ahead schedule (A09/A01). "
-            "Physical - total schedule: summed over all borders, loop flows cancel; the remainder is cross-border "
-            "balancing energy (IGCC/PICASSO/MARI), remedial actions, emergency assistance, unintended deviation, "
-            "HVDC losses and data gaps, all of which the commercial schedules exclude by definition (TR 12.1.F). "
-            "Per border it is mostly loop/transit flow, but on flow-based Core borders the bilateral schedule is a "
-            "computed decomposition of net positions, so part of the difference is an allocation artefact.")
+            "Physical - total schedule: commercial schedules exclude remedial actions (redispatch/countertrading), "
+            "balancing-energy exchange, emergency assistance and unintended flows (TR 12.1.F). Per border it is "
+            "mostly loop/transit flow; on flow-based Core borders the bilateral schedule is a computed decomposition "
+            "of net positions. Summed over all borders loop flows cancel; the remainder (live 23./24.09.2026: "
+            "sd 1.1-1.4 GW, r 0.13-0.21 with the NRV-Saldo) mixes remedial actions, balancing exchange and "
+            "publication inconsistencies and is not a trading signal.")
         return result
 
     return cached(key, ttl_for(d, max(CACHE_SECONDS, 600)), force, work)
@@ -1726,7 +1730,7 @@ def fetch_balancing(day: str | None, force: bool = False) -> dict[str, Any]:
             "activation_areas": {family: {area: {"state": v["state"], "selected_processes": v["selected_processes"],
                 "up": as_points(v["up"]), "down": as_points(v["down"]), "net": as_points(v["net"])}
                 for area, v in data["areas"].items()} for family, data in (("aFRR", afrr), ("mFRR", mfrr))},
-            "note": "Imbalance: A86 businessType A19 (total imbalance volume D), MWh per 15 min; flowDirection A01 = surplus (+, long), A02 = deficit (-, short), A03 = balanced (0); unknown codes are dropped and listed under sources.A86.ignored. reBAP: A85; same-day values are preliminary estimates, final only if docStatus = A02. Germany-wide aFRR/mFRR comes from netztransparenz.de when configured; ENTSO-E A24 lacks Amprion, so its sum is shown only as an explicitly partial figure.",
+            "note": "Imbalance: A86 businessType A19 (total imbalance volume D), MWh per 15 min; flowDirection A01 = surplus (+, long), A02 = deficit (-, short), A03 = balanced (0); unknown codes are dropped and listed under sources.A86.ignored. reBAP: A85; same-day values are preliminary (identical to the TSOs' AEP-Schaetzer on netztransparenz.de, checked 24.09.2026), final only if docStatus = A02. Germany-wide aFRR/mFRR comes from netztransparenz.de when configured; ENTSO-E A24 lacks Amprion, so its sum is shown only as an explicitly partial figure.",
         }
 
     return cached(key, ttl_for(d, max(CACHE_SECONDS, 600)), force, work)

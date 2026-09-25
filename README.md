@@ -22,11 +22,21 @@ Fachliche Korrekturen nach Abgleich mit den ENTSO-E *Detailed Data Descriptions*
 - **Systembilanz (A86) streng nach TR 17.1.H.** Gezählt wird nur die Bilanz D (businessType A19). TR 17.1.H sieht einen zweiten Wert vor (MV − SV); eine weitere Zeitreihe im Dokument würde sonst still mitaddiert. `flowDirection` wird explizit gemappt: A01 = Überschuss (+, lang), A02 = Defizit (−, kurz), A03 = ausgeglichen (0). Unbekannte oder fehlende Codes werden verworfen und unter `sources.A86.ignored` gemeldet statt als positiv geraten. Werte in MW (MAW) werden in MWh umgerechnet.
 - **Revisionen mit Richtungswechsel.** Bisher war die Richtung Teil des Revisionsschlüssels. Kippte eine Revision eine MTU von lang auf kurz, blieben beide Werte stehen und wurden verrechnet. Jetzt ersetzt die neueste Revision die MTU komplett.
 - **reBAP als vorläufig gekennzeichnet.** Werte vom selben Tag sind operative Schätzungen; der Abrechnungspreis kommt später qualitätsgesichert. Die App liest `docStatus` (A01 vorläufig, A02 final, X01 geschätzt) und zeigt „vorläufig“, solange nicht final gemeldet ist.
-- **Grenzflüsse richtig benannt.** „Ungeplant“ heißt jetzt „Phys. − Fahrplan“. In der Summe über alle Grenzen heben sich Ringflüsse auf; der Rest ist, was Handelsfahrpläne laut TR 12.1.F ausschließen (Regelenergie-Austausch, Redispatch, Nothilfe), plus Abweichungen, HVDC-Verluste und Datenlücken. Pro Grenze dominieren Ring-/Transitflüsse, an Core-Grenzen ist der Fahrplan aber eine rechnerische Zerlegung der Nettopositionen.
+- **Grenzflüsse richtig benannt.** „Ungeplant“ heißt jetzt „Phys. − Fahrplan“. Handelsfahrpläne enthalten laut TR 12.1.F keinen Redispatch/Countertrading, keine Regelenergie, keine Nothilfe. Pro Grenze dominieren Ring-/Transitflüsse (an Core-Grenzen ist der Fahrplan eine rechnerische Zerlegung der Nettopositionen). In der Summe heben sich Ringflüsse auf; der Rest ist laut Live-Check (unten) eine Mischung aus Countertrading, Regelenergie und Veröffentlichungs-Inkonsistenzen – Kontext, kein Handelssignal.
 - **Ø 1 h neben der letzten MTU.** Die jüngsten Ist-Werte sind laut TR 16.1.B/C Hochrechnungen und werden mit Messwerten nachgezogen. EE-Abweichung, Residuallast-Überraschung und Systembilanz zeigen deshalb zusätzlich das Mittel der letzten vier MTUs.
 - **Zeitumstellung.** Die Diagramme plotten intern in UTC und beschriften in Europe/Berlin. Vorher lagen am Tag der Rückstellung (z. B. 25.10.2026) die beiden Stunden 02:00–03:00 übereinander.
+- **netztransparenz lokal:** Die Zugangsdaten wurden beim Import gelesen, bevor `.env` geladen war – lokal war netztransparenz deshalb immer „nicht konfiguriert“. Jetzt zur Laufzeit gelesen. Auf Render (echte Umgebungsvariablen) war das nicht betroffen.
+- **Verbindungs-Pool** auf 64 erhöht (vorher 10 bei bis zu ~50 parallelen Abfragen → verworfene Verbindungen und neue TLS-Handshakes).
 - **Nullwerte** werden in Balkendiagrammen keiner Seite mehr zugeordnet (vorher: 0 = „lang“ bzw. „über Prognose“).
 - **Betrieb:** Logging aller abgefangenen Upstream-Fehler (Token maskiert, ohne Tracebacks), längerer Cache für vergangene Tage (`ENTSOE_PAST_DAY_CACHE_SECONDS`, Standard 1 h), Container läuft als unprivilegierter User, GitHub-Actions-Tests, Render deployt nur nach grünen Tests (`autoDeployTrigger: checksPass`).
+
+### Live-Validierung (23. und 24.09.2026, echte ENTSO-E- und netztransparenz-Daten)
+
+- `scripts/live_smoke.py`: 57 unabhängige XML-Vergleiche, 5.376 Punkte, alle ohne Abweichung.
+- A86 wird von allen vier Regelzonen als businessType **A19**, Richtung **A01/A02**, Einheit **MWH**, docStatus **A01** (vorläufig) veröffentlicht.
+- A86 (×4 → MW) gegen NRV-Saldo: **r = −0,993 / −0,999**, Maximum exakt bei Versatz 0, Residuum im Mittel 3–20 MW. Vorzeichen und Zeitachse stimmen.
+- ENTSO-E-A85 am selben Tag = **AEP-Schätzer** von netztransparenz.de (96/96 Viertelstunden identisch).
+- Grenzen, Summe „Phys. − Fahrplan“: Mittel +80 bzw. +570 MW, Standardabweichung 1,1–1,4 GW, Korrelation mit NRV-Saldo nur 0,13–0,21. Countertrading DE→DK1 bis 2,2 GW. HVDC-Grenzen (DK2, SE4) ≈ 0 wie erwartet.
 
 ## Neu in v5.0 gegenüber v4.4.1
 
@@ -54,7 +64,7 @@ python -m uvicorn app.main:app --port 8000
 
 ```bash
 pip install -r requirements-dev.txt
-python -m unittest discover -s tests -v                                  # offline, 107 Tests
+python -m unittest discover -s tests -v                                  # offline, 108 Tests
 python scripts/live_smoke.py --env-file .env --day 2026-09-22            # echter ENTSO-E-Abgleich
 python scripts/ntp_check.py --day 2026-09-22                             # netztransparenz.de-Zugang prüfen
 python scripts/smoke_http.py --base-url https://de-power-desk.onrender.com --day 2026-09-22 --user … --password …

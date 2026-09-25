@@ -3,6 +3,7 @@ Run: python scripts/live_smoke.py --env-file /path/to/.env --day 2026-09-10 --ou
 """
 import argparse
 import json
+import os
 import sys
 import time
 import threading
@@ -47,7 +48,12 @@ def reference_points(body, field='quantity', psr=None, category=None, business=N
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--env-file');parser.add_argument('--day',required=True);parser.add_argument('--output',default='live-audit.json')
     args=parser.parse_args()
-    if args.env_file:m.API_KEY=dotenv_values(args.env_file).get('ENTSOE_API_KEY','').strip()
+    if args.env_file:
+        values=dotenv_values(args.env_file)
+        m.API_KEY=(values.get('ENTSOE_API_KEY') or '').strip()
+        # netztransparenz credentials are read at call time from the environment.
+        for key in ('NTP_CLIENT_ID','NTP_CLIENT_SECRET'):
+            if values.get(key):os.environ.setdefault(key,values[key])
     if not m.API_KEY:raise SystemExit('ENTSOE_API_KEY missing')
     captured={};lock=threading.Lock();original=m.entsoe_request
     def request(params,start,end):

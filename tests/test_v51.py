@@ -165,6 +165,15 @@ class HelperTests(unittest.TestCase):
         self.assertIn('loop flows cancel', d['methodology'])
 
 
+class NtpCredentialTests(unittest.TestCase):
+    def test_credentials_are_read_at_call_time(self):
+        # app.main loads .env after importing app.ntp; module constants missed it.
+        with patch.dict('os.environ', {'NTP_CLIENT_ID': '', 'NTP_CLIENT_SECRET': ''}):
+            self.assertFalse(m.ntp.configured())
+        with patch.dict('os.environ', {'NTP_CLIENT_ID': 'id', 'NTP_CLIENT_SECRET': 'secret'}):
+            self.assertTrue(m.ntp.configured())
+
+
 class FrontendV51Tests(unittest.TestCase):
     def test_x_axis_is_utc_with_berlin_labels(self):
         js = Path('app/static/app.js').read_text(encoding='utf-8')

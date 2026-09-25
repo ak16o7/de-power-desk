@@ -200,7 +200,7 @@ class CoreTests(unittest.TestCase):
         def fake_doc(doc, start, end):
             return (price, {'DE':'ok'}, 'DE') if doc == 'A85' else (volume, {'DE':'ok'}, 'DE')
 
-        with patch('app.main._query_aggregated_bids', side_effect=fake_bids), patch('app.main._query_balancing_doc_with_fallback', side_effect=fake_doc):
+        with patch('app.main._query_aggregated_bids', side_effect=fake_bids), patch('app.main._query_balancing_doc_with_fallback', side_effect=fake_doc), patch('app.main.ntp.configured', return_value=False):
             data = fetch_balancing('2026-08-28', force=True)
         self.assertEqual(data['kpi']['basis'], 'A86 total imbalance volume')
         self.assertEqual(data['kpi']['imbalance_volume_mwh'], 120.0)
@@ -221,7 +221,7 @@ class CoreTests(unittest.TestCase):
                 return volume, {'50HERTZ':'ok', 'AMPRION':'no_data', 'TENNET_DE':'no_data', 'TRANSNETBW':'no_data'}, 'German control areas (partial)'
             return [], {'50HERTZ':'no_data'}, 'none'
 
-        with patch('app.main._query_aggregated_bids', side_effect=fake_bids), patch('app.main._query_balancing_doc_with_fallback', side_effect=fake_doc):
+        with patch('app.main._query_aggregated_bids', side_effect=fake_bids), patch('app.main._query_balancing_doc_with_fallback', side_effect=fake_doc), patch('app.main.ntp.configured', return_value=False):
             data = fetch_balancing('2026-08-28', force=True)
         self.assertIsNone(data['kpi']['imbalance_volume_mwh'])
         self.assertEqual(data['sources']['A86']['state'], 'partial')

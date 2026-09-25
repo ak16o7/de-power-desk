@@ -85,7 +85,7 @@
 
     <article class="panel wide" id="pFlow">
       <div class="panel-head">
-        <div><h2>Grenzflüsse DE-LU</h2><p>Physisch (A11) vs. DA-Fahrplan (A09/A01) vs. Gesamtfahrplan inkl. Intraday (A09/A05). Positiv = Import nach DE-LU. Intraday-XB = Gesamt − DA. Phys. − Fahrplan: in der Summe über alle Grenzen heben sich Ringflüsse auf – übrig bleiben Regelenergie-Austausch (IGCC/PICASSO/MARI), grenzüberschreitender Redispatch, Abweichungen und HVDC-Verluste, die in Handelsfahrplänen per Definition fehlen. Pro Grenze vor allem Ring-/Transitflüsse; an Core-Grenzen ist der Fahrplan aber eine rechnerische Zerlegung der Nettopositionen.</p></div>
+        <div><h2>Grenzflüsse DE-LU</h2><p>Physisch (A11) vs. DA-Fahrplan (A09/A01) vs. Gesamtfahrplan inkl. Intraday (A09/A05). Positiv = Import nach DE-LU. Intraday-XB = Gesamt − DA. Phys. − Fahrplan = alles, was Handelsfahrpläne per Definition nicht enthalten: Redispatch/Countertrading, Regelenergie-Austausch, Nothilfe, ungewollte Abweichungen. Pro Grenze vor allem Ring-/Transitflüsse (an Core-Grenzen ist der Fahrplan eine rechnerische Zerlegung der Nettopositionen). In der Summe heben sich Ringflüsse auf; der Rest schwankt um ±1 GW und mehr, ohne klaren Bezug zum NRV-Saldo – Kontext, kein Handelssignal.</p></div>
         <div class="panel-tools"><select id="flowBorder" aria-label="Grenze"><option value="TOTAL">Summe alle Grenzen</option></select></div>
       </div>
       <div class="chart" id="chFlow"></div>
@@ -120,7 +120,7 @@
 
     <article class="panel wide" id="pSys">
       <div class="panel-head">
-        <div><h2>Systembilanz, reBAP &amp; Regelenergie</h2><p>Bilanz: ENTSO-E A86, Summe der vier Regelzonen (MWh je 15 min; positiv = System lang, negativ = System kurz). reBAP: A85 – am selben Tag eine vorläufige Schätzung, der Abrechnungspreis folgt später. aFRR/mFRR deutschlandweit: netztransparenz.de, falls konfiguriert – sonst ENTSO-E A24, dort fehlt Amprion.</p></div>
+        <div><h2>Systembilanz, reBAP &amp; Regelenergie</h2><p>Bilanz: ENTSO-E A86, Summe der vier Regelzonen (MWh je 15 min; positiv = System lang, negativ = System kurz). reBAP: A85 – am selben Tag der AEP-Schätzer der ÜNB (vorläufig), der Abrechnungspreis folgt später. aFRR/mFRR deutschlandweit: netztransparenz.de, falls konfiguriert – sonst ENTSO-E A24, dort fehlt Amprion.</p></div>
       </div>
       <div class="chart tall" id="chSys"></div>
       <div class="metrics" id="mSys"></div>
