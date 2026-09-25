@@ -207,7 +207,7 @@ class ParserRegressionTests(unittest.TestCase):
               for area in m.BALANCING_AREAS for t in (T,T+timedelta(minutes=15))
               if not (area=='AMPRION' and t==T)]
         empty={'up':{},'down':{},'net':{},'state':'no_data','sources':{},'areas':{}}
-        with patch.object(m,'_fetch_activation_family',return_value=empty), patch.object(m,'_query_balancing_doc_with_fallback',return_value=(rows,{a:'ok' for a in m.BALANCING_AREAS},'German control areas')):
+        with patch.object(m,'_fetch_activation_family',return_value=empty), patch.object(m,'_query_balancing_doc_with_fallback',return_value=(rows,{a:'ok' for a in m.BALANCING_AREAS},'German control areas')), patch.object(m.ntp,'configured',return_value=False):
             result=m.fetch_balancing('2026-09-10',True)
         self.assertEqual(len(result['series']['Net imbalance volume']),1)
         self.assertEqual(result['series']['Net imbalance volume'][0]['v'],4)
