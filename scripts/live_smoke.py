@@ -3,6 +3,7 @@ Run: python scripts/live_smoke.py --env-file /path/to/.env --day 2026-09-10 --ou
 """
 import argparse
 import json
+import os
 import sys
 import time
 import threading
@@ -15,13 +16,14 @@ from dotenv import dotenv_values
 from app import main as m
 
 
-def reference_points(body, field='quantity', psr=None, category=None):
+def reference_points(body, field='quantity', psr=None, category=None, business=None):
     """Independent XML expansion for the published fixed-duration test day."""
     result={}
     for xml in m.xml_documents(body):
         root=ET.fromstring(xml)
         for ts in root.findall('.//{*}TimeSeries'):
             if psr and ts.findtext('.//{*}psrType') != psr:continue
+            if business and ts.findtext('{*}businessType') not in (None,)+tuple(business):continue
             if psr and ts.find('{*}outBiddingZone_Domain.mRID') is not None:continue
             for period in ts.findall('{*}Period'):
                 start=datetime.fromisoformat(period.findtext('{*}timeInterval/{*}start').replace('Z','+00:00'))
@@ -46,7 +48,12 @@ def reference_points(body, field='quantity', psr=None, category=None):
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--env-file');parser.add_argument('--day',required=True);parser.add_argument('--output',default='live-audit.json')
     args=parser.parse_args()
-    if args.env_file:m.API_KEY=dotenv_values(args.env_file).get('ENTSOE_API_KEY','').strip()
+    if args.env_file:
+        values=dotenv_values(args.env_file)
+        m.API_KEY=(values.get('ENTSOE_API_KEY') or '').strip()
+        # netztransparenz credentials are read at call time from the environment.
+        for key in ('NTP_CLIENT_ID','NTP_CLIENT_SECRET'):
+            if values.get(key):os.environ.setdefault(key,values[key])
     if not m.API_KEY:raise SystemExit('ENTSOE_API_KEY missing')
     captured={};lock=threading.Lock();original=m.entsoe_request
     def request(params,start,end):
@@ -101,10 +108,24 @@ def main():
                 compare(family+' '+area,data['net'],{t:sum(v[t] for v in refs) for t in common})
     volumes=[]
     for area in m.BALANCING_AREAS:
-        vals=reference_points(raw('A86',controlArea_Domain=m.AREAS[area]))
+        # D only (businessType A19); A01 surplus +, A02 deficit -, A03 balanced 0 (DDD v3r4 17.1.H).
+        vals=reference_points(raw('A86',controlArea_Domain=m.AREAS[area]),business=('A19',))
         by_time={}
-        for (t,d),v in vals.items():by_time[t]=by_time.get(t,0)+( -v if d=='A02' else v)
+        for (t,d),v in vals.items():
+            assert d in ('A01','A02','A03'),('A86 unexpected direction',area,d)
+            by_time[t]=by_time.get(t,0)+{'A01':v,'A02':-v,'A03':0.0}[d]
         volumes.append(by_time)
+    # Show which A86 business types / directions / statuses the TSOs actually publish.
+    a86_codes={}
+    for area in m.BALANCING_AREAS:
+        seen=set()
+        for xml in m.xml_documents(raw('A86',controlArea_Domain=m.AREAS[area])):
+            root=ET.fromstring(xml)
+            status=root.findtext('{*}docStatus/{*}value')
+            for ts in root.findall('.//{*}TimeSeries'):
+                seen.add((ts.findtext('{*}businessType'),ts.findtext('{*}flowDirection.direction'),ts.findtext('{*}quantity_Measure_Unit.name'),status))
+        a86_codes[area]=sorted(map(str,seen))
+    checks.append({'name':'A86 published codes (business, direction, unit, docStatus)','points':0,'codes':a86_codes})
     common=set.intersection(*(set(v) for v in volumes))
     compare('A86 Germany',results['balancing']['data']['series']['Net imbalance volume'],{t:sum(v[t] for v in volumes) for t in common})
     for category,label in [('A04','Imbalance price long'),('A05','Imbalance price short')]:
