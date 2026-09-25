@@ -490,7 +490,28 @@
     });
   }
 
+  // ---------- theme ----------
+  // Default follows the OS; a click stores an explicit choice per browser.
+  // The inline script in <head> applies the stored choice before first paint.
+  const THEME_KEY = 'dpd-theme';
+  const systemTheme = () => (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+  const storedTheme = () => { try { const t = localStorage.getItem(THEME_KEY); return t === 'light' || t === 'dark' ? t : null; } catch (_) { return null; } };
+  function applyTheme(theme) {
+    document.documentElement.dataset.theme = theme;
+    const btn = $('theme');
+    const label = theme === 'dark' ? 'Helles Design' : 'Dunkles Design';
+    btn.title = label; btn.setAttribute('aria-label', label);
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'dark' ? '#111110' : '#f3f2ee');
+    Object.values(RENDER).forEach((f) => f());  // Plotly reads colors at render time
+  }
+
   async function init() {
+    applyTheme(storedTheme() || systemTheme());
+    $('theme').addEventListener('click', () => {
+      const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+      try { localStorage.setItem(THEME_KEY, next); } catch (_) { /* private mode: still switch for this view */ }
+      applyTheme(next);
+    });
     $('year').textContent = new Date().toLocaleDateString('de-DE', { year: 'numeric', timeZone: 'Europe/Berlin' });
     $('day').value = todayBerlin();
     $('day').max = new Date(Date.now() + 2 * 864e5).toLocaleDateString('sv-SE', { timeZone: 'Europe/Berlin' });
@@ -502,7 +523,7 @@
     $('fText').addEventListener('input', renderNotices);
     segment('resTech', 'resTech', renderRes);
     segment('outZone', 'outZone', renderOut);
-    window.matchMedia('(prefers-color-scheme: light)').addEventListener?.('change', () => Object.values(RENDER).forEach((f) => f()));
+    window.matchMedia('(prefers-color-scheme: light)').addEventListener?.('change', () => { if (!storedTheme()) applyTheme(systemTheme()); });
     try {
       const h = await getJSON('/health', 30000);
       $('authChip').classList.toggle('hidden', !!h.auth_enabled || !!h.public_ok);
