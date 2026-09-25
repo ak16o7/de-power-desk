@@ -33,7 +33,7 @@ from fastapi.staticfiles import StaticFiles
 from app import ntp
 from app.quality import classify_notice, outage_breakdown, panel_quality
 
-VERSION = "5.3.0"
+VERSION = "5.4.0"
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR.parent / ".env")
 
@@ -116,7 +116,7 @@ DEFAULT_NEIGHBORS = list(ALL_NEIGHBORS)
 BALANCING_AREAS = ["50HERTZ", "AMPRION", "TENNET_DE", "TRANSNETBW"]
 
 SESSION = requests.Session()
-SESSION.headers.update({"User-Agent": "entsoe-desk/5.3 (+desk dashboard)"})
+SESSION.headers.update({"User-Agent": "entsoe-desk/5.4 (+desk dashboard)"})
 # The UI loads all panels at once (up to ~50 concurrent upstream calls: borders 12,
 # outages 8, balancing 2x8 + 4 ...); the default pool of 10 made
 # urllib3 discard and re-handshake connections under load.
@@ -596,6 +596,40 @@ def latest_revision_groups(rows: list[dict[str, Any]], identity_fields: tuple[st
 # A19 = "Balance energy deviation". Other business types (e.g. the separately
 # published MV-SV value) must never be summed into D.
 IMBALANCE_SIGN = {"A01": 1.0, "A02": -1.0, "A03": 0.0}
+
+# v5.4 switch: set NTP_IMBALANCE_NOWCAST=0 to return exactly to v5.3 behaviour.
+NTP_IMBALANCE_NOWCAST = os.getenv("NTP_IMBALANCE_NOWCAST", "1").strip().lower() not in ("0", "false", "no", "off")
+RZ_COLUMN_BY_AREA = {"50HERTZ": "50Hertz", "AMPRION": "Amprion", "TENNET_DE": "TenneT TSO", "TRANSNETBW": "TransnetBW"}
+
+
+def imbalance_nowcast(a86_by_area: dict[str, dict[datetime, float]], rz_by_column: dict[str, dict[datetime, float]],
+                      a86_total: dict[datetime, float]) -> dict[datetime, float]:
+    """Germany-wide imbalance (MWh) for the MTUs the A86 sum does not cover yet.
+
+    The TSOs publish the same per-area figure twice: ENTSO-E A86 = -RZ-Saldo/4
+    from netztransparenz (live check 24.09.2026: exact for 50Hertz, TenneT and
+    TransnetBW, r = -0.989 for Amprion), but netztransparenz is up to ~17 min
+    earlier (TenneT). Per area the published A86 value wins; only a missing one
+    is filled from -RZ/4. Only MTUs after the last complete A86 sum and covered
+    by all four areas are returned. The UI marks them as preliminary.
+    """
+    last = max(a86_total) if a86_total else None
+    times = set().union(*(set(v) for v in rz_by_column.values())) if rz_by_column else set()
+    out: dict[datetime, float] = {}
+    for t in sorted(times):
+        if last is not None and t <= last:
+            continue
+        total = 0.0
+        for area, column in RZ_COLUMN_BY_AREA.items():
+            if t in a86_by_area.get(area, {}):
+                total += a86_by_area[area][t]
+            elif t in rz_by_column.get(column, {}):
+                total += -rz_by_column[column][t] / 4
+            else:
+                break
+        else:
+            out[t] = total
+    return out
 IMBALANCE_BUSINESS = (None, "A19")
 
 
@@ -1642,7 +1676,7 @@ def fetch_balancing(day: str | None, force: bool = False) -> dict[str, Any]:
             fm = pool.submit(_fetch_activation_family, "mFRR", start, end)
             fp = pool.submit(_query_balancing_doc_with_fallback, "A85", start, end)
             fv = pool.submit(_query_balancing_doc_with_fallback, "A86", start, end)
-            fn = pool.submit(ntp.fetch_block, start, end) if ntp.configured() else None
+            fn = pool.submit(ntp.fetch_block, start, end, NTP_IMBALANCE_NOWCAST) if ntp.configured() else None
             afrr, mfrr = fa.result(), fm.result()
             price_rows_raw, a85_status, a85_scope = fp.result()
             volume_rows_raw, a86_status, a86_scope = fv.result()
@@ -1665,8 +1699,8 @@ def fetch_balancing(day: str | None, force: bool = False) -> dict[str, Any]:
             times = set.intersection(*({r["ts"] for r in price_rows if r.get("source_area") == a} for a in BALANCING_AREAS))
             price_rows = [r for r in price_rows if r["ts"] in times]
         a86_ignored: dict[str, dict[str, list[str]]] = {}
+        per_area: dict[str, dict[datetime, float]] = {}
         if a86_scope == "German control areas":
-            per_area = {}
             for a in BALANCING_AREAS:
                 per_area[a], ignored = imbalance_volume_series([r for r in volume_rows if r.get("source_area") == a])
                 if ignored:
@@ -1700,7 +1734,14 @@ def fetch_balancing(day: str | None, force: bool = False) -> dict[str, Any]:
         imbalance_state = None
         if ivp:
             imbalance_state = "surplus" if ivp[1] > 0 else "deficit" if ivp[1] < 0 else "balanced"
-        imbalance_1h = trailing_mean(imbalance_volume, ivp[0]) if ivp else None
+        # Preliminary extension of the A86 sum from netztransparenz RZ-Saldo
+        # (only when switched on, configured and A86 comes per control area).
+        imbalance_nowcast_series: dict[datetime, float] = {}
+        if NTP_IMBALANCE_NOWCAST and ntp_data and ntp_data.get("rz") and a86_scope == "German control areas":
+            imbalance_nowcast_series = {t: v for t, v in imbalance_nowcast(per_area, ntp_data["rz"], imbalance_volume).items() if t < end}
+        imbalance_combined = {**imbalance_volume, **imbalance_nowcast_series}
+        combined_last = latest_point(imbalance_combined)
+        imbalance_1h = trailing_mean(imbalance_combined, combined_last[0]) if combined_last else None
         price_series_for_status = price_single or price_short or price_long
         price_point = latest_point(price_series_for_status)
         # Same-day reBAP/imbalance values are operational estimates; the settled
@@ -1766,7 +1807,8 @@ def fetch_balancing(day: str | None, force: bool = False) -> dict[str, Any]:
         if ntp_data is not None:
             st = ntp_data["status"]
             state = "ok" if all(v == "ok" for v in st.values()) else "partial" if any(v == "ok" for v in st.values()) else "error"
-            sources["NTP"] = {"state": state, "label": "netztransparenz.de NRV-Saldo + aFRR/mFRR", "scope": "German control block", "detail": st, "diag": ntp_data.get("diag", {})}
+            sources["NTP"] = {"state": state, "label": "netztransparenz.de NRV-Saldo + aFRR/mFRR", "scope": "German control block", "detail": st, "diag": ntp_data.get("diag", {}),
+                              "rz_saldo": ntp_data.get("rz_status", "not_requested")}
         else:
             sources["NTP"] = {"state": "not_configured", "label": "netztransparenz.de", "scope": "set NTP_CLIENT_ID / NTP_CLIENT_SECRET"}
 
@@ -1777,6 +1819,7 @@ def fetch_balancing(day: str | None, force: bool = False) -> dict[str, Any]:
                 "mFRR activated up": as_points(mfrr_up), "mFRR activated down": as_points(mfrr_down), "mFRR net": as_points(mfrr_net),
                 "aFRR net partial": as_points(afrr_partial["net"]), "mFRR net partial": as_points(mfrr_partial["net"]),
                 "Net activation": as_points(activation_net), "Net imbalance volume": as_points(imbalance_volume),
+                "Net imbalance volume nowcast": as_points(imbalance_nowcast_series),
                 "Imbalance price": as_points(price_single), "Imbalance price long": as_points(price_long), "Imbalance price short": as_points(price_short),
                 "NRV-Saldo": as_points(nrv), "aFRR net DE": as_points(de_afrr), "mFRR net DE": as_points(de_mfrr),
             },
@@ -1784,6 +1827,9 @@ def fetch_balancing(day: str | None, force: bool = False) -> dict[str, Any]:
                 "imbalance_volume_mwh": round(ivp[1], 3) if ivp else None, "imbalance_state": imbalance_state,
                 "imbalance_avg_mw": round(ivp[1] * 4, 1) if ivp else None,
                 "imbalance_1h_avg_mw": round(imbalance_1h * 4, 1) if imbalance_1h is not None else None,
+                "imbalance_1h_as_of": combined_last[0].isoformat() if combined_last else None,
+                "imbalance_nowcast_points": len(imbalance_nowcast_series),
+                "imbalance_nowcast_through": latest_timestamp(imbalance_nowcast_series),
                 "imbalance_status": volume_status, "price_status": price_status,
                 "system_now_mw": round(system_now[2], 1) if system_now else None,
                 "system_now_state": (("surplus" if system_now[2] > 0 else "deficit" if system_now[2] < 0 else "balanced") if system_now else None),
