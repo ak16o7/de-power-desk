@@ -28,6 +28,12 @@ services:
         value: "3600"
       - key: LOG_LEVEL
         value: INFO
+      # Background refresh of today's panels (keep the service awake with an
+      # uptime monitor on /health on the free plan).
+      - key: BACKGROUND_REFRESH
+        value: "1"
+      - key: STALE_MAX_SECONDS
+        value: "1800"
       # Strongly recommended: without these the dashboard (and your ENTSO-E
       # request budget) is open to anyone who finds the URL.
       - key: DASHBOARD_USERNAME

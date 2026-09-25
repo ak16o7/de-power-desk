@@ -13,6 +13,7 @@ import threading
 import time
 import zipfile
 from collections import deque
+from contextlib import asynccontextmanager
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date as Date, datetime, timedelta, timezone
 from pathlib import Path
@@ -25,13 +26,14 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from app import ntp
 from app.quality import classify_notice, outage_breakdown, panel_quality
 
-VERSION = "5.1.0"
+VERSION = "5.2.0"
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR.parent / ".env")
 
@@ -41,6 +43,30 @@ load_dotenv(BASE_DIR.parent / ".env")
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO").upper(),
                     format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 LOG = logging.getLogger("de_power_desk")
+
+
+class SecretMaskFilter(logging.Filter):
+    """Masks credentials in EVERY record reaching the root handlers.
+
+    urllib3 logs retries with the full request URL - including
+    ?securityToken=<ENTSO-E key> - so masking only our own messages is not
+    enough. Handler-level filters also see records propagated from libraries.
+    """
+    def filter(self, record: logging.LogRecord) -> bool:
+        secrets = [v for v in (os.getenv("ENTSOE_API_KEY", "").strip(), os.getenv("NTP_CLIENT_SECRET", "").strip()) if len(v) >= 8]
+        if not secrets:
+            return True
+        message = record.getMessage()
+        masked = re.sub(r"(securityToken=)[^&\s'\"]+", r"\1***", message)
+        for secret in secrets:
+            masked = masked.replace(secret, "***")
+        if masked != message:
+            record.msg, record.args = masked, None
+        return True
+
+
+for _handler in logging.getLogger().handlers:
+    _handler.addFilter(SecretMaskFilter())
 
 BERLIN = ZoneInfo("Europe/Berlin")
 UTC = timezone.utc
@@ -90,7 +116,7 @@ DEFAULT_NEIGHBORS = list(ALL_NEIGHBORS)
 BALANCING_AREAS = ["50HERTZ", "AMPRION", "TENNET_DE", "TRANSNETBW"]
 
 SESSION = requests.Session()
-SESSION.headers.update({"User-Agent": "entsoe-desk/5.1 (+desk dashboard)"})
+SESSION.headers.update({"User-Agent": "entsoe-desk/5.2 (+desk dashboard)"})
 # The UI loads all panels at once (up to ~50 concurrent upstream calls: borders 12,
 # outages 8, balancing 2x8 + 4 ...); the default pool of 10 made
 # urllib3 discard and re-handshake connections under load.
@@ -102,28 +128,46 @@ SESSION.mount("https://", HTTPAdapter(pool_connections=4, pool_maxsize=64, max_r
 
 
 class TTLCache:
+    """TTL cache that can also hand out an expired value (stale-while-revalidate).
+
+    Expired entries are kept for STALE_KEEP seconds after expiry, so that the
+    background refresher's panels can be served instantly while a new version
+    is being fetched. get() still only returns fresh values.
+    """
+    STALE_KEEP = 3600.0
+
     def __init__(self, max_entries: int = 256) -> None:
-        self._d: dict[str, tuple[float, Any]] = {}
+        self._d: dict[str, tuple[float, float, Any]] = {}  # key -> (expires, stored, value)
         self._lock = threading.Lock()
         self._max_entries = max_entries
 
     def _purge_expired(self, now: float) -> None:
-        for key, (expires, _) in list(self._d.items()):
-            if now >= expires:
+        for key, (expires, _, _) in list(self._d.items()):
+            if now >= expires + self.STALE_KEEP:
                 self._d.pop(key, None)
 
     def get(self, key: str) -> Any | None:
         with self._lock:
             item = self._d.get(key)
-            if not item:
+            if not item or time.time() >= item[0]:
                 return None
-            expires, value = item
-            if time.time() >= expires:
-                self._d.pop(key, None)
-                return None
-            return value
+            return item[2]
 
-    def set(self, key: str, value: Any, ttl: int) -> Any:
+    def get_stale(self, key: str, max_age: float) -> Any | None:
+        """Value stored at most max_age seconds ago, expired or not."""
+        with self._lock:
+            item = self._d.get(key)
+            if not item or time.time() - item[1] > max_age:
+                return None
+            return item[2]
+
+    def stored_at(self, key: str) -> float | None:
+        with self._lock:
+            item = self._d.get(key)
+            return item[1] if item else None
+
+    def set(self, key: str, value: Any, ttl: int, stored: float | None = None) -> Any:
+        """stored: keep the original build time when a previous value is restored."""
         with self._lock:
             now = time.time()
             self._purge_expired(now)
@@ -132,7 +176,7 @@ class TTLCache:
                 # against upstream fan-out, not a historical database.
                 oldest = min(self._d, key=lambda k: self._d[k][0])
                 self._d.pop(oldest, None)
-            self._d[key] = (now + ttl, value)
+            self._d[key] = (now + ttl, now if stored is None else stored, value)
         return value
 
     def clear(self) -> None:
@@ -621,11 +665,27 @@ def ttl_for(d: Date, base: int) -> int:
     return max(base, PAST_DAY_CACHE_SECONDS) if d < datetime.now(BERLIN).date() else base
 
 
+STALE_MAX_SECONDS = int(os.getenv("STALE_MAX_SECONDS", "1800"))
+
+
+def cache_key(panel: str, d: Date, neighbors: list[str] | None = None) -> str:
+    """Single source of truth for panel cache keys (fetch functions + refresher)."""
+    key = f"{panel}:v5:{d.isoformat()}"
+    return f"{key}:{','.join(neighbors)}" if neighbors is not None else key
+
+
 def cached(key: str, ttl: int, force: bool, fn):
     if not force:
         hit = CACHE.get(key)
         if hit is not None:
             return hit
+        # Stale-while-revalidate: for panels the background refresher keeps
+        # warm, an expired value is returned at once instead of making this
+        # visitor wait ~30 s for ~115 upstream calls. The refresher replaces it.
+        if REFRESHER.manages(key):
+            stale = CACHE.get_stale(key, STALE_MAX_SECONDS)
+            if stale is not None:
+                return stale
     with CACHE_LOCKS_GUARD:
         entry = CACHE_LOCKS.get(key)
         if entry is None:
@@ -653,7 +713,7 @@ def cached(key: str, ttl: int, force: bool, fn):
 
 def fetch_renewables(day: str | None, force: bool = False) -> dict[str, Any]:
     start, end, d = day_bounds(day)
-    key = f"renewables:v5:{d.isoformat()}"
+    key = cache_key("renewables", d)
 
     def maybe_forecast(process_type: str) -> list[dict[str, Any]]:
         try:
@@ -794,7 +854,7 @@ def fetch_renewables(day: str | None, force: bool = False) -> dict[str, Any]:
 
 def fetch_load(day: str | None, force: bool = False) -> dict[str, Any]:
     start, end, d = day_bounds(day)
-    key = f"load:v5:{d.isoformat()}"
+    key = cache_key("load", d)
 
     def work():
         try:
@@ -804,7 +864,9 @@ def fetch_load(day: str | None, force: bool = False) -> dict[str, Any]:
             actual = {}
         forecast = series(parse_timeseries(entsoe_request(
             {"documentType": "A65", "processType": "A01", "outBiddingZone_Domain": AREAS["DE"]}, start, end)))
-        ren = fetch_renewables(d.isoformat(), force=force)
+        # Renewables come from the cache (refreshed before load by the
+        # background refresher); forcing load must not refetch them again.
+        ren = fetch_renewables(d.isoformat(), force=False)
         rs = ren["series"]
         res_actual = {parse_dt(p["t"]): p["v"] for p in rs.get("RES Actual", [])}
         res_da = {parse_dt(p["t"]): p["v"] for p in rs.get("RES Day-ahead", [])}
@@ -882,7 +944,7 @@ def fetch_borders(day: str | None, neighbors: list[str], force: bool = False) ->
     neighbors = list(dict.fromkeys(n for n in neighbors if n in ALL_NEIGHBORS))
     if not neighbors:
         neighbors = DEFAULT_NEIGHBORS
-    key = f"borders:v5:{d.isoformat()}:{','.join(neighbors)}"
+    key = cache_key("borders", d, neighbors)
 
     # A09 contract types: A01 = day-ahead, A05 = total (all horizons incl.
     # intraday). Total − DA = cross-border intraday trade.
@@ -1168,7 +1230,7 @@ def select_outage_rows(zone_rows: dict[str, list[dict[str, Any]]], states: dict[
 def fetch_outages(day: str | None, force: bool = False) -> dict[str, Any]:
     start, end, d = day_bounds(day)
     zones = OUTAGE_ZONES
-    key = f"outages:v5:{d.isoformat()}"
+    key = cache_key("outages", d)
     # One extra day of history so that "change vs 24h earlier" can be derived.
     qstart = start - timedelta(days=1)
 
@@ -1570,20 +1632,26 @@ def _fetch_activation_family(family, start, end):
 
 def fetch_balancing(day: str | None, force: bool = False) -> dict[str, Any]:
     start, end, d = day_bounds(day)
-    key = f"balancing:v5:{d.isoformat()}"
+    key = cache_key("balancing", d)
 
     def work():
-        with ThreadPoolExecutor(max_workers=2) as pool:
+        # All five sources are independent; fetched together, the panel takes
+        # as long as the slowest one (A24 aFRR, ~5-20 s) instead of the sum.
+        with ThreadPoolExecutor(max_workers=5) as pool:
             fa = pool.submit(_fetch_activation_family, "aFRR", start, end)
             fm = pool.submit(_fetch_activation_family, "mFRR", start, end)
+            fp = pool.submit(_query_balancing_doc_with_fallback, "A85", start, end)
+            fv = pool.submit(_query_balancing_doc_with_fallback, "A86", start, end)
+            fn = pool.submit(ntp.fetch_block, start, end) if ntp.configured() else None
             afrr, mfrr = fa.result(), fm.result()
+            price_rows_raw, a85_status, a85_scope = fp.result()
+            volume_rows_raw, a86_status, a86_scope = fv.result()
+            ntp_data: dict[str, Any] | None = fn.result() if fn is not None else None
         afrr_up, afrr_down, afrr_net = afrr["up"], afrr["down"], afrr["net"]
         mfrr_up, mfrr_down, mfrr_net = mfrr["up"], mfrr["down"], mfrr["net"]
         afrr_state, mfrr_state = afrr["state"], mfrr["state"]
         activation_net = add_series_complete(afrr_net, mfrr_net)
 
-        price_rows_raw, a85_status, a85_scope = _query_balancing_doc_with_fallback("A85", start, end)
-        volume_rows_raw, a86_status, a86_scope = _query_balancing_doc_with_fallback("A86", start, end)
         # A partial subset of the four German control areas is diagnostic data,
         # not a Germany-wide total/price. Suppress the numeric series unless an
         # aggregate DE-LU/DE fallback was available.
@@ -1652,11 +1720,26 @@ def fetch_balancing(day: str | None, force: bool = False) -> dict[str, Any]:
         afrr_partial, mfrr_partial = partial_family(afrr), partial_family(mfrr)
 
         # Optional: complete German block data from netztransparenz.de.
-        ntp_data: dict[str, Any] | None = ntp.fetch_block(start, end) if ntp.configured() else None
         nrv = ntp_data["nrv"] if ntp_data else {}
         ntp_afrr_net = subtract_series(ntp_data["afrr_up"], ntp_data["afrr_down"]) if ntp_data else {}
         ntp_mfrr_net = subtract_series(ntp_data["mfrr_up"], ntp_data["mfrr_down"]) if ntp_data else {}
         nrvp = latest_point(nrv)
+
+        # "System now": A86 x 4 and -NRV-Saldo are the same quantity in MW
+        # (live r = -0.993..-0.999 at lag 0), but netztransparenz publishes
+        # ~10 min after the MTU while the A86 German sum waits for the slowest
+        # TSO (~25-40 min). The headline therefore uses whichever is newer;
+        # on a tie A86 (the balance by definition) wins.
+        now_candidates = []
+        if ivp:
+            now_candidates.append((ivp[0], 1, ivp[1] * 4, "A86 (ENTSO-E)"))
+        if nrvp:
+            now_candidates.append((nrvp[0], 0, -nrvp[1], "NRV-Saldo (netztransparenz.de)"))
+        system_now = max(now_candidates) if now_candidates else None
+        if system_now and system_now[1] == 0:
+            system_now_series = {t: -v for t, v in nrv.items()}
+        else:
+            system_now_series = {t: v * 4 for t, v in imbalance_volume.items()}
 
         def latest_val(ss: dict[datetime, float]) -> float | None:
             pp = latest_point(ss); return round(pp[1], 3) if pp else None
@@ -1702,6 +1785,11 @@ def fetch_balancing(day: str | None, force: bool = False) -> dict[str, Any]:
                 "imbalance_avg_mw": round(ivp[1] * 4, 1) if ivp else None,
                 "imbalance_1h_avg_mw": round(imbalance_1h * 4, 1) if imbalance_1h is not None else None,
                 "imbalance_status": volume_status, "price_status": price_status,
+                "system_now_mw": round(system_now[2], 1) if system_now else None,
+                "system_now_state": (("surplus" if system_now[2] > 0 else "deficit" if system_now[2] < 0 else "balanced") if system_now else None),
+                "system_now_as_of": system_now[0].isoformat() if system_now else None,
+                "system_now_source": system_now[3] if system_now else None,
+                "system_now_changes": change_windows(system_now_series) if system_now else {"d15_mw": None, "d30_mw": None, "d60_mw": None},
                 "as_of": ivp[0].isoformat() if ivp else None, "basis": "A86 total imbalance volume",
                 "changes": change_windows(imbalance_volume),
                 "net_activation_mw": latest_val(activation_net), "afrr_net_mw": latest_val(afrr_net), "mfrr_net_mw": latest_val(mfrr_net),
@@ -1735,13 +1823,151 @@ def fetch_balancing(day: str | None, force: bool = False) -> dict[str, Any]:
 
     return cached(key, ttl_for(d, max(CACHE_SECONDS, 600)), force, work)
 
+BACKGROUND_REFRESH = os.getenv("BACKGROUND_REFRESH", "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+class BackgroundRefresher:
+    """Keeps today's panels warm so visitors never trigger the upstream fan-out.
+
+    One daemon thread runs the jobs strictly one after another (each job still
+    fans out its HTTP calls): on 0.1 CPU a full cycle costs roughly 1.6 s of
+    CPU, so sequential jobs keep request latency flat. Intervals follow the
+    publication rhythm: balancing/netztransparenz appear per quarter-hour
+    10-40 min after the MTU, actuals and flows up to H+1, outage notices are
+    event-driven. A failed job keeps the previous value (served stale for up
+    to STALE_MAX_SECONDS) and is retried at its next slot.
+    """
+
+    SCHEDULE: tuple[tuple[str, int], ...] = (
+        ("balancing", int(os.getenv("REFRESH_BALANCING_SECONDS", "180"))),
+        ("renewables", int(os.getenv("REFRESH_RENEWABLES_SECONDS", "300"))),
+        ("load", int(os.getenv("REFRESH_LOAD_SECONDS", "300"))),  # after renewables: uses them
+        ("borders", int(os.getenv("REFRESH_BORDERS_SECONDS", "300"))),
+        ("outages", int(os.getenv("REFRESH_OUTAGES_SECONDS", "900"))),
+    )
+    TICK_SECONDS = 15
+
+    def __init__(self) -> None:
+        self._thread: threading.Thread | None = None
+        self._stop = threading.Event()
+        self._last_attempt: dict[str, float] = {}
+        self.last_ok: dict[str, str] = {}
+        self.last_error: dict[str, str] = {}
+
+    @property
+    def running(self) -> bool:
+        return self._thread is not None and self._thread.is_alive()
+
+    def jobs(self) -> dict[str, Any]:
+        return {
+            "balancing": lambda: fetch_balancing(None, True),
+            "renewables": lambda: fetch_renewables(None, True),
+            "load": lambda: fetch_load(None, True),
+            "borders": lambda: fetch_borders(None, DEFAULT_NEIGHBORS, True),
+            "outages": lambda: fetch_outages(None, True),
+        }
+
+    @staticmethod
+    def key_of(name: str, d: Date) -> str:
+        return cache_key(name, d, DEFAULT_NEIGHBORS if name == "borders" else None)
+
+    @classmethod
+    def keys_for(cls, d: Date) -> set[str]:
+        return {cls.key_of(name, d) for name, _ in cls.SCHEDULE}
+
+    QUALITY_RANK = {"complete": 2, "partial": 1, "unavailable": 0}
+
+    def _keep_better_previous(self, name: str, key: str, before: Any, before_stored: float | None) -> None:
+        """A transient upstream failure must not replace a complete panel with a
+        partial/empty one. The previous value is put back with its ORIGINAL
+        build time, so tiles keep showing its true age, and it is only kept
+        while younger than STALE_MAX_SECONDS; after that the new state wins."""
+        after = CACHE.get_stale(key, STALE_MAX_SECONDS)
+        if before is None or after is None or after is before:
+            return
+        old_q = panel_quality(name, before)["state"]
+        new_q = panel_quality(name, after)["state"]
+        if self.QUALITY_RANK[new_q] < self.QUALITY_RANK[old_q]:
+            CACHE.set(key, before, 60, stored=before_stored)
+            self.last_error[name] = f"kept previous {old_q} result; new result was {new_q}"
+            LOG.warning("refresh %s: new result %s, keeping previous %s result", name, new_q, old_q)
+
+    def manages(self, key: str) -> bool:
+        return self.running and key in self.keys_for(datetime.now(BERLIN).date())
+
+    def run_once(self, now: float | None = None) -> list[str]:
+        """Run every job whose interval has elapsed; returns the names run."""
+        now = time.monotonic() if now is None else now
+        jobs, ran = self.jobs(), []
+        for name, every in self.SCHEDULE:
+            if self._stop.is_set():
+                break
+            last = self._last_attempt.get(name)
+            if last is not None and now - last < every:
+                continue
+            self._last_attempt[name] = now
+            started = time.monotonic()
+            key = self.key_of(name, datetime.now(BERLIN).date())
+            before, before_stored = CACHE.get_stale(key, STALE_MAX_SECONDS), CACHE.stored_at(key)
+            try:
+                jobs[name]()
+                self.last_ok[name] = datetime.now(BERLIN).isoformat(timespec="seconds")
+                self.last_error.pop(name, None)
+                self._keep_better_previous(name, key, before, before_stored)
+                LOG.debug("refresh %s done in %.1fs", name, time.monotonic() - started)
+            except Exception as e:  # never let one panel stop the loop
+                self.last_error[name] = f"{type(e).__name__}: {mask_secret(str(e))[:200]}"
+                log_upstream(f"refresh {name}", e)
+            ran.append(name)
+        return ran
+
+    def _loop(self) -> None:
+        LOG.info("background refresher started: %s", dict(self.SCHEDULE))
+        while not self._stop.is_set():
+            self.run_once()
+            self._stop.wait(self.TICK_SECONDS)
+
+    def start(self) -> None:
+        if self.running:
+            return
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._loop, name="background-refresher", daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=10)
+        self._thread = None
+
+
+REFRESHER = BackgroundRefresher()
+
+
+@asynccontextmanager
+async def lifespan(_app):
+    if BACKGROUND_REFRESH and API_KEY:
+        REFRESHER.start()
+    else:
+        LOG.info("background refresher disabled (BACKGROUND_REFRESH=%s, API key %s)",
+                 BACKGROUND_REFRESH, "set" if API_KEY else "missing")
+    try:
+        yield
+    finally:
+        REFRESHER.stop()
+
+
 app = FastAPI(
     title="ENTSO-E Desk",
     version=VERSION,
     docs_url=None,
     redoc_url=None,
     openapi_url=None,
+    lifespan=lifespan,
 )
+# JSON panels (~20-240 KB) and the bundled Plotly (~4.6 MB) compress 5-10x;
+# free-tier outbound bandwidth and first paint on mobile both benefit.
+app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)
 
 
 @app.middleware("http")
@@ -1770,6 +1996,10 @@ async def optional_basic_auth(request, call_next):
     else:
         response = await call_next(request)
 
+    # Static assets are versioned via ?v=... in index.html: browsers may keep
+    # them for a day instead of re-downloading/re-gzipping Plotly each visit.
+    if request.url.path.startswith("/static/") and request.url.query.startswith("v="):
+        response.headers.setdefault("Cache-Control", "public, max-age=86400, immutable")
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "no-referrer")
@@ -1795,7 +2025,25 @@ def index():
 @app.get("/health")
 def health():
     return {"ok": True, "version": VERSION, "configured": bool(API_KEY), "auth_enabled": AUTH_ENABLED, "public_ok": PUBLIC_OK,
-            "netztransparenz": ntp.configured(), "time": datetime.now(BERLIN).isoformat()}
+            "netztransparenz": ntp.configured(), "time": datetime.now(BERLIN).isoformat(),
+            "background_refresh": REFRESHER.running, "refreshed": REFRESHER.last_ok,
+            "refresh_errors": REFRESHER.last_error}
+
+
+@app.get("/api/freshness")
+def api_freshness():
+    """Cheap poll target for the browser: when was each of today's panels built?
+
+    Reads the cache only (never upstream). The page re-downloads a panel only
+    when its timestamp changed, instead of pulling all five every few minutes.
+    """
+    d = datetime.now(BERLIN).date()
+    panels = {}
+    for name in ("renewables", "load", "borders", "outages", "balancing"):
+        key = cache_key(name, d, DEFAULT_NEIGHBORS if name == "borders" else None)
+        value = CACHE.get_stale(key, STALE_MAX_SECONDS)
+        panels[name] = value.get("updated") if isinstance(value, dict) else None
+    return {"date": d.isoformat(), "background": REFRESHER.running, "panels": panels}
 
 
 def panel_response(name, fn):

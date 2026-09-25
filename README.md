@@ -1,4 +1,4 @@
-# DE Power Desk v5.1
+# DE Power Desk v5.2
 
 Ein Intraday-Dashboard für den deutschen Strommarkt auf Basis von ENTSO-E-Daten, optional ergänzt um netztransparenz.de. Es läuft mit FastAPI und lokal gebündeltem Plotly und wird auf Render mit Docker betrieben. Routen, Umgebungsvariablen und Deployment sind zu v4.4.1 kompatibel.
 
@@ -14,6 +14,21 @@ Ein Intraday-Dashboard für den deutschen Strommarkt auf Basis von ENTSO-E-Daten
 | **Systembilanz / reBAP** | A86-Bilanz (negativ = System kurz), reBAP (A85), aFRR, NRV-Saldo | Ob das System gerade kurz oder lang ist |
 
 Die Markierung „bullish/bearish“ ist eine einfache Desk-Heuristik: EE-Abweichung ab ±300 MW, Residuallast ab ±500 MW, Kraftwerks-Δ ab ±300 MW. Sie ist keine Handelsempfehlung.
+
+## Neu in v5.2 gegenüber v5.1: Datenaktualität
+
+Gemessen am 25.09.2026 gegen 18:25: Die Quellen erscheinen mit sehr unterschiedlichem Verzug nach Ende der Viertelstunde – netztransparenz NRV-Saldo/aFRR ~10 min, A86 je ÜNB 10–40 min (die Deutschland-Summe wartet auf den langsamsten, meist TenneT), reBAP ~25 min, EE-Ist und physische Flüsse ~40 min, Last-Ist ~55 min. v5.1 lud dazu bei jedem abgelaufenen Cache den ganzen Tag neu (114 Abfragen, 20–60 s Wartezeit für den ersten Besucher) und legte bis zu 10 min Cache auf den Verzug.
+
+- **Hintergrund-Aktualisierung.** Ein Server-Thread hält den laufenden Tag warm: Systembilanz/reBAP/netztransparenz alle 3 min, EE, Last und Grenzen alle 5 min, Kraftwerke alle 15 min – strikt nacheinander, damit 0,1 CPU (Render Free) nicht blockiert. Besucher bekommen immer sofort den letzten Stand (Antwortzeit ~10–20 ms statt 20–60 s). Status unter `/health` (`refreshed`, `refresh_errors`).
+- **Keine Verschlechterung durch Störungen.** Liefert ein Abruf ein schlechteres Ergebnis als vorher (z. B. „vollständig“ → „teilweise“ wegen eines ENTSO-E-Aussetzers), bleibt der vorherige Stand bis zu 30 min stehen – mit seinem echten Alter.
+- **„System jetzt“ aus der frischesten Quelle.** A86 × 4 und −NRV-Saldo sind dieselbe Größe (live r = −0,993 bis −0,999). Die Kachel nimmt die jeweils neuere; das ist meist der NRV-Saldo, 15–30 min vor der A86-Summe. A86 steht als Bestätigung daneben.
+- **Datenalter pro Kachel** („MTU 17:30 · 40 min alt“, läuft live mit). Oben steht jetzt „Server-Stand“ statt der Uhrzeit des Browser-Abrufs.
+- **Browser lädt nur Geändertes.** Die Seite fragt alle 30 s `/api/freshness` (nur Cache, keine Upstream-Abfrage) und lädt ausschließlich Panels, die der Server neu gebaut hat.
+- **Systembilanz-Panel parallel:** aFRR, mFRR, A85, A86 und netztransparenz gleichzeitig statt nacheinander (gemessen 65 s → 16 s beim Kaltstart).
+- **gzip + Browser-Cache:** JSON-Panels ~10× kleiner, Plotly 4,8 MB → 1,5 MB und mit `?v=` einen Tag im Browser-Cache.
+- **Betrieb auf Render Free:** Ein Uptime-Monitor sollte `/health` alle 5–10 min abrufen, sonst schläft der Dienst nach 15 min ein und der Hintergrund-Thread mit ihm. Ein Dienst rund um die Uhr braucht 720–744 der 750 Free-Stunden pro Workspace.
+
+Neue optionale Variablen: `BACKGROUND_REFRESH` (Standard `1`), `REFRESH_BALANCING_SECONDS` (180), `REFRESH_RENEWABLES_SECONDS` / `REFRESH_LOAD_SECONDS` / `REFRESH_BORDERS_SECONDS` (300), `REFRESH_OUTAGES_SECONDS` (900), `STALE_MAX_SECONDS` (1800).
 
 ## Neu in v5.1 gegenüber v5.0
 
@@ -64,7 +79,7 @@ python -m uvicorn app.main:app --port 8000
 
 ```bash
 pip install -r requirements-dev.txt
-python -m unittest discover -s tests -v                                  # offline, 108 Tests
+python -m unittest discover -s tests -v                                  # offline, 128 Tests
 python scripts/live_smoke.py --env-file .env --day 2026-09-22            # echter ENTSO-E-Abgleich
 python scripts/ntp_check.py --day 2026-09-22                             # netztransparenz.de-Zugang prüfen
 python scripts/smoke_http.py --base-url https://de-power-desk.onrender.com --day 2026-09-22 --user … --password …
