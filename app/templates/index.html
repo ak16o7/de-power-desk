@@ -10,7 +10,7 @@
   <link rel="apple-touch-icon" href="/static/apple-touch-icon.png?v=1" />
   <meta name="theme-color" content="#111110" />
   <script>/* apply a stored theme before first paint (no flash) */try{var t=localStorage.getItem('dpd-theme');document.documentElement.dataset.theme=(t==='light'||t==='dark')?t:(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark');}catch(e){}</script>
-  <link rel="stylesheet" href="/static/style.css?v=5.3.0" />
+  <link rel="stylesheet" href="/static/style.css?v=5.4.0" />
   <script src="/static/plotly.min.js?v=3.3.1"></script>
 </head>
 <body data-refresh="__REFRESH_SECONDS__">
@@ -129,7 +129,7 @@
 
     <article class="panel wide" id="pSys">
       <div class="panel-head">
-        <div><h2>Systembilanz, reBAP &amp; Regelenergie</h2><p>Bilanz: ENTSO-E A86, Summe der vier Regelzonen (MWh je 15 min; positiv = System lang, negativ = System kurz). reBAP: A85 – am selben Tag der AEP-Schätzer der ÜNB (vorläufig), der Abrechnungspreis folgt später. aFRR/mFRR deutschlandweit: netztransparenz.de, falls konfiguriert – sonst ENTSO-E A24, dort fehlt Amprion.</p></div>
+        <div><h2>Systembilanz, reBAP &amp; Regelenergie</h2><p>Bilanz: ENTSO-E A86, Summe der vier Regelzonen (MWh je 15 min; positiv = System lang, negativ = System kurz). Schraffierte Balken: letzte Viertelstunden, für die A86 noch nicht vollständig ist, aus demselben Wert der Netzbetreiber bei netztransparenz (−RZ-Saldo ÷ 4), vorläufig. reBAP: A85 – am selben Tag der AEP-Schätzer der ÜNB (vorläufig), der Abrechnungspreis folgt später. aFRR/mFRR deutschlandweit: netztransparenz.de, falls konfiguriert – sonst ENTSO-E A24, dort fehlt Amprion.</p></div>
       </div>
       <div class="chart tall" id="chSys"></div>
       <div class="metrics" id="mSys"></div>
@@ -144,6 +144,6 @@
     <div class="copy">© <span id="year">2026</span> Kaan Akdere · DE Power Desk</div>
   </footer>
 </main>
-<script src="/static/app.js?v=5.3.0"></script>
+<script src="/static/app.js?v=5.4.0"></script>
 </body>
 </html>

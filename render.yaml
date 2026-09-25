@@ -34,6 +34,11 @@ services:
         value: "1"
       - key: STALE_MAX_SECONDS
         value: "1800"
+      # v5.4: preliminary imbalance from netztransparenz RZ-Saldo. Managed in
+      # the dashboard (sync: false) so "0" there switches it off reliably;
+      # unset = on.
+      - key: NTP_IMBALANCE_NOWCAST
+        sync: false
       # Strongly recommended: without these the dashboard (and your ENTSO-E
       # request budget) is open to anyone who finds the URL.
       - key: DASHBOARD_USERNAME
