@@ -27,13 +27,13 @@ from urllib3.util.retry import Retry
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from app import ntp
 from app.quality import classify_notice, outage_breakdown, panel_quality
 
-VERSION = "5.2.0"
+VERSION = "5.2.1"
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR.parent / ".env")
 
@@ -116,7 +116,7 @@ DEFAULT_NEIGHBORS = list(ALL_NEIGHBORS)
 BALANCING_AREAS = ["50HERTZ", "AMPRION", "TENNET_DE", "TRANSNETBW"]
 
 SESSION = requests.Session()
-SESSION.headers.update({"User-Agent": "entsoe-desk/5.2 (+desk dashboard)"})
+SESSION.headers.update({"User-Agent": "entsoe-desk/5.2.1 (+desk dashboard)"})
 # The UI loads all panels at once (up to ~50 concurrent upstream calls: borders 12,
 # outages 8, balancing 2x8 + 4 ...); the default pool of 10 made
 # urllib3 discard and re-handshake connections under load.
@@ -2014,6 +2014,13 @@ async def optional_basic_auth(request, call_next):
 
 
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon():
+    # Browsers and crawlers request /favicon.ico regardless of <link rel=icon>.
+    return FileResponse(BASE_DIR / "static" / "favicon.ico", media_type="image/x-icon",
+                        headers={"Cache-Control": "public, max-age=86400"})
 
 
 @app.get("/", response_class=HTMLResponse)
