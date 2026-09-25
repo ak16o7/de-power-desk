@@ -14,6 +14,7 @@ Sign convention (German): NRV-Saldo > 0 = the control block is short
 """
 from __future__ import annotations
 
+import logging
 import os
 import threading
 import time
@@ -29,6 +30,7 @@ CLIENT_SECRET = os.getenv("NTP_CLIENT_SECRET", "").strip()
 TIMEOUT = int(os.getenv("NTP_HTTP_TIMEOUT", "30"))
 
 UTC = timezone.utc
+LOG = logging.getLogger("de_power_desk.ntp")
 _OFFSETS = {"UTC": 0, "GMT": 0, "CET": 1, "MEZ": 1, "CEST": 2, "MESZ": 2}
 
 _token: dict[str, Any] = {"value": None, "expires": 0.0}
@@ -204,7 +206,9 @@ def fetch_block(start: datetime, end: datetime) -> dict[str, Any]:
         except (ValueError, KeyError) as e:
             result["status"][name] = "parse_error"
             diag["error"] = str(e)[:200]
+            LOG.warning("netztransparenz %s: parse error: %s", name, diag["error"])
         except Exception as e:
             result["status"][name] = "error"
             diag["error"] = str(e)[:200]
+            LOG.warning("netztransparenz %s: %s: %s", name, type(e).__name__, diag["error"])
     return result
