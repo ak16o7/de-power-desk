@@ -1,6 +1,8 @@
-# Update des bestehenden Render-Dienstes auf v5.1
+# Update des bestehenden Render-Dienstes
 
-> v5.0 → v5.1: keine neuen Pflicht-Variablen. Optional `ENTSOE_PAST_DAY_CACHE_SECONDS` (Standard 3600) und `LOG_LEVEL` (Standard INFO). Wenn der Dienst nicht über das Blueprint verwaltet wird, in Render unter **Settings → Build & Deploy → Auto-Deploy** „After CI Checks Pass“ wählen, damit nur Commits mit grünen Tests live gehen.
+> **v5.1 → v5.2:** keine Pflicht-Variablen. Der Dienst aktualisiert die Daten jetzt selbst im Hintergrund. Auf dem Free-Tarif muss dafür ein Uptime-Monitor (z. B. UptimeRobot) **`/health`** alle 5–10 Minuten abrufen – nicht `/` (würde bei aktivem Login 401 liefern). Optional: `BACKGROUND_REFRESH=0` schaltet die Hintergrund-Aktualisierung ab (dann Verhalten wie v5.1); `REFRESH_*_SECONDS` und `STALE_MAX_SECONDS` siehe README. Nach dem Deploy: `/health` zeigt `"version":"5.2.0"`, `"background_refresh":true` und nach ~1 min unter `refreshed` alle fünf Panels.
+>
+> **v5.0 → v5.1:** keine neuen Pflicht-Variablen. Optional `ENTSOE_PAST_DAY_CACHE_SECONDS` (Standard 3600) und `LOG_LEVEL` (Standard INFO). Wenn der Dienst nicht über das Blueprint verwaltet wird, in Render unter **Settings → Build & Deploy → Auto-Deploy** „After CI Checks Pass“ wählen, damit nur Commits mit grünen Tests live gehen.
 
 ## Erstmaliges Update auf v5.0
 
@@ -17,7 +19,7 @@
    - optional `NTP_CLIENT_ID` und `NTP_CLIENT_SECRET` (siehe unten)
    - Bewusst ohne Login (z. B. zum Testen): Benutzer und Passwort leer lassen und `DASHBOARD_PUBLIC_OK=true` setzen. Dann verschwindet die Warnung „Öffentlich ohne Login“.
 4. Committen und auf den Branch pushen, den Render deployt. Auto-Deploy baut neu, die URL bleibt gleich.
-5. `/health` aufrufen. Erwartet werden `version` = `5.1.0`, `configured` = `true`, `auth_enabled` = `true` und `netztransparenz` = `true`.
+5. `/health` aufrufen. Erwartet werden `version` = `5.2.0`, `configured` = `true`, `auth_enabled` = `true` und `netztransparenz` = `true`.
 6. `python scripts/smoke_http.py --base-url https://de-power-desk.onrender.com --day <gestern> --user … --password …`
 
 ## netztransparenz.de (optional, aber der einzige Weg zu aFRR für ganz Deutschland)
