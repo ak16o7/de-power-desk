@@ -352,13 +352,22 @@
     setSig('sigSys', {
       value: isNum(k.system_now_mw) ? `${sgn(k.system_now_mw)}<small>MW</small>` : '—',
       sub: `${short ? 'System kurz' : long ? 'System lang' : nowState === 'balanced' ? 'ausgeglichen' : '—'} · reBAP${prelim ? ' (vorl.)' : ''} <b>${fmt(price, NF2)}</b> €/MWh<br>A86 ${hhmm(k.as_of)}: <b>${sgn(k.imbalance_volume_mwh)}</b> MWh · ${act}`,
-      foot: `<span>${mtu(k.system_now_as_of || k.as_of)}</span><span title="${fromNrv ? 'Bilanz = −NRV-Saldo (netztransparenz.de); A86 folgt später' : 'Bilanz = A86 × 4'}">${fromNrv ? 'aus NRV-Saldo' : 'aus A86'}</span><span>Ø 1 h A86 ${sgn(k.imbalance_1h_avg_mw)} MW</span>${deltas(k.system_now_changes || k.changes)}`,
+      foot: `<span>${mtu(k.system_now_as_of || k.as_of)}</span><span title="${fromNrv ? 'Bilanz = −NRV-Saldo (netztransparenz.de); A86 folgt später' : 'Bilanz = A86 × 4'}">${fromNrv ? 'aus NRV-Saldo' : 'aus A86'}</span><span title="${k.imbalance_nowcast_points ? 'letzte Stunde inkl. vorläufiger Viertelstunden aus netztransparenz' : 'letzte Stunde aus A86'}">Ø 1 h ${sgn(k.imbalance_1h_avg_mw)} MW${k.imbalance_nowcast_points ? '*' : ''}</span>${deltas(k.system_now_changes || k.changes)}`,
       tag: short ? { cls: 'bull', text: 'kurz' } : long ? { cls: 'bear', text: 'lang' } : null,
     });
 
     const traces = [
       ...bars(s['Net imbalance volume'], 'Bilanz', 'y', 'MWh', ['lang', 'kurz']).map((t, i) => Object.assign(t, { showlegend: true, name: i === 0 ? 'System lang (MWh)' : 'System kurz (MWh)' })),
     ];
+    // Latest quarter-hours before the A86 sum is complete: same TSO figure
+    // from netztransparenz (−RZ-Saldo ÷ 4), drawn hatched and pale.
+    const nowcast = s['Net imbalance volume nowcast'] || [];
+    if (nowcast.length) {
+      bars(nowcast, 'Bilanz vorläufig', 'y', 'MWh (vorläufig, netztransparenz)', ['lang', 'kurz']).forEach((t, i) => traces.push(Object.assign(t, {
+        name: 'vorläufig (netztransparenz)', showlegend: i === 0, legendgroup: 'nowcast', opacity: 0.55,
+        marker: Object.assign({}, t.marker, { pattern: { shape: '/', solidity: 0.35 } }),
+      })));
+    }
     if (k.price_mode === 'single' || !(s['Imbalance price long'] || []).length) {
       traces.push(line(s['Imbalance price'], prelim ? 'reBAP €/MWh (vorläufig)' : 'reBAP €/MWh', cssVar('--s2'), 'solid', 'y2', { hovertemplate: '%{y:,.2f} €/MWh' }));
     } else {
