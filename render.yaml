@@ -5,7 +5,10 @@ services:
     plan: free
     dockerfilePath: ./Dockerfile
     healthCheckPath: /health
-    autoDeploy: true
+    # Deploy only after the GitHub Actions tests for the commit are green.
+    # Applies when the service is managed by this Blueprint; otherwise set
+    # Settings -> Build & Deploy -> Auto-Deploy = "After CI Checks Pass".
+    autoDeployTrigger: checksPass
     envVars:
       - key: ENTSOE_API_KEY
         sync: false
@@ -21,6 +24,10 @@ services:
         value: "35"
       - key: ENTSOE_MAX_REQUESTS_PER_MINUTE
         value: "300"
+      - key: ENTSOE_PAST_DAY_CACHE_SECONDS
+        value: "3600"
+      - key: LOG_LEVEL
+        value: INFO
       # Strongly recommended: without these the dashboard (and your ENTSO-E
       # request budget) is open to anyone who finds the URL.
       - key: DASHBOARD_USERNAME
