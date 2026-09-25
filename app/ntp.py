@@ -174,15 +174,25 @@ def _column(rows: list[dict[str, Any]], *names: str) -> dict[datetime, float]:
     return {}
 
 
-def fetch_block(start: datetime, end: datetime) -> dict[str, Any]:
+RZ_COLUMNS = ("50Hertz", "Amprion", "TenneT TSO", "TransnetBW")
+
+
+def fetch_block(start: datetime, end: datetime, include_rz: bool = False) -> dict[str, Any]:
     """NRV-Saldo and activated aFRR/mFRR for the German control block.
+
+    include_rz additionally loads the RZ-Saldo per control area (MW, > 0 =
+    short). It is optional and reported separately: its status never changes
+    the state of the three core series.
 
     'Betrieblich' (operational, near real time) first; if it has no data for
     the range, 'Qualitaetsgesichert' (quality-assured, later) is tried.
     """
     session = requests.Session()
-    result: dict[str, Any] = {"status": {}, "diag": {}, "nrv": {}, "afrr_up": {}, "afrr_down": {}, "mfrr_up": {}, "mfrr_down": {}}
+    result: dict[str, Any] = {"status": {}, "diag": {}, "nrv": {}, "afrr_up": {}, "afrr_down": {}, "mfrr_up": {}, "mfrr_down": {},
+                              "rz": {}, "rz_status": "not_requested"}
     jobs = {"nrv": "NrvSaldo/NRVSaldo", "afrr": "NrvSaldo/AktivierteSRL", "mfrr": "NrvSaldo/AktivierteMRL"}
+    if include_rz:
+        jobs["rz"] = "NrvSaldo/RZSaldo"
     for name, base in jobs.items():
         diag: dict[str, Any] = {}
         result["diag"][name] = diag
@@ -201,6 +211,9 @@ def fetch_block(start: datetime, end: datetime) -> dict[str, Any]:
             if name == "nrv":
                 result["nrv"] = _column(rows, "Deutschland", "NRV-Saldo")
                 ok = bool(result["nrv"])
+            elif name == "rz":
+                result["rz"] = {col: _column(rows, col) for col in RZ_COLUMNS}
+                ok = any(result["rz"].values())
             else:
                 result[f"{name}_up"] = {t: abs(v) for t, v in _column(rows, "Deutschland (Positiv)").items()}
                 result[f"{name}_down"] = {t: abs(v) for t, v in _column(rows, "Deutschland (Negativ)").items()}
@@ -217,4 +230,7 @@ def fetch_block(start: datetime, end: datetime) -> dict[str, Any]:
             result["status"][name] = "error"
             diag["error"] = str(e)[:200]
             LOG.warning("netztransparenz %s: %s: %s", name, type(e).__name__, diag["error"])
+    # The optional RZ-Saldo must not turn the core NTP source "partial".
+    if "rz" in result["status"]:
+        result["rz_status"] = result["status"].pop("rz")
     return result
