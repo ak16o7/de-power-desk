@@ -33,7 +33,7 @@ from fastapi.staticfiles import StaticFiles
 from app import ntp
 from app.quality import classify_notice, outage_breakdown, panel_quality
 
-VERSION = "5.2.1"
+VERSION = "5.3.0"
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR.parent / ".env")
 
@@ -116,7 +116,7 @@ DEFAULT_NEIGHBORS = list(ALL_NEIGHBORS)
 BALANCING_AREAS = ["50HERTZ", "AMPRION", "TENNET_DE", "TRANSNETBW"]
 
 SESSION = requests.Session()
-SESSION.headers.update({"User-Agent": "entsoe-desk/5.2.1 (+desk dashboard)"})
+SESSION.headers.update({"User-Agent": "entsoe-desk/5.3 (+desk dashboard)"})
 # The UI loads all panels at once (up to ~50 concurrent upstream calls: borders 12,
 # outages 8, balancing 2x8 + 4 ...); the default pool of 10 made
 # urllib3 discard and re-handshake connections under load.

@@ -19,6 +19,15 @@
     --bull:#d03b3b;--bear:#2a78d6;--focus:#1c5cab;
   }
 }
+/* Explicit choice via the header toggle (stored per browser) beats the OS setting. */
+:root[data-theme="light"]{
+    color-scheme:light;
+    --bg:#f3f2ee;--surface:#fcfcfb;--surface-2:#f0efec;--line:#dcdbd5;--line-soft:#e8e7e2;
+    --text:#0b0b0b;--text-2:#52514e;--muted:#6f6e68;
+    --s1:#2a78d6;--s2:#eb6834;--s3:#1baf7a;--s4:#eda100;
+    --pos:#2a78d6;--neg:#d03b3b;--mid:#f0efec;
+    --bull:#d03b3b;--bear:#2a78d6;--focus:#1c5cab;
+}
 *{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;overflow-x:hidden;font-variant-numeric:tabular-nums}
@@ -38,6 +47,10 @@ button,input,select{font:inherit;color:inherit}
 .btn{cursor:pointer;font-weight:600}
 .btn:hover{background:var(--surface-2)}
 .btn.primary{border-color:var(--s1)}
+.btn.icon{width:36px;padding:0;display:inline-flex;align-items:center;justify-content:center}
+.btn.icon svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.theme-dark-only,.theme-light-only{display:none}
+:root[data-theme="dark"] .theme-dark-only,:root[data-theme="light"] .theme-light-only{display:inline}
 .toggle{display:flex;align-items:center;gap:6px;color:var(--text-2);font-size:13px;padding:0 4px}
 .status{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12px}
 .dot{width:8px;height:8px;border-radius:50%;background:var(--muted);display:inline-block}
