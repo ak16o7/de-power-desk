@@ -29,9 +29,53 @@
   const todayBerlin = () => new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Berlin' });
   const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 
-  // Plotly ignores UTC offsets; strip them so the axis shows Berlin wall time.
-  const xs = (pts) => (pts || []).map((p) => p.t.slice(0, 19));
+  // Plotly ignores UTC offsets in date strings. Berlin wall-clock strings would
+  // collide on the DST fall-back day (02:00–02:59 happens twice) and draw two
+  // MTUs on top of each other. So x is plotted in UTC; tick labels and the
+  // hover time are rendered in Europe/Berlin (see timeTicks / withBerlinTime).
+  const utcX = (iso) => new Date(iso).toISOString().slice(0, 19);
+  const xs = (pts) => (pts || []).map((p) => utcX(p.t));
   const ys = (pts) => (pts || []).map((p) => p.v);
+  const BERLIN_PARTS = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/Berlin', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  });
+  const berlinParts = (d) => Object.fromEntries(BERLIN_PARTS.formatToParts(d).filter((p) => p.type !== 'literal').map((p) => [p.type, p.value]));
+  const berlinLabel = (x) => {
+    const d = new Date(`${x}Z`);
+    // MEZ/MESZ suffix keeps the repeated hour on the DST fall-back day unambiguous.
+    return d.toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Berlin', timeZoneName: 'short' });
+  };
+  // Every full `stepH` hours of the selected Berlin delivery day, as UTC x values.
+  function timeTicks(day, stepH) {
+    const [y, m, dd] = day.split('-').map(Number);
+    const vals = [], text = [];
+    for (let t = Date.UTC(y, m - 1, dd) - 3 * 3600e3; t <= Date.UTC(y, m - 1, dd) + 27 * 3600e3; t += 900e3) {
+      const p = berlinParts(new Date(t));
+      if (`${p.year}-${p.month}-${p.day}` !== day || p.minute !== '00' || Number(p.hour) % stepH) continue;
+      vals.push(new Date(t).toISOString().slice(0, 19));
+      text.push(`${p.hour}:00`);
+    }
+    return { tickmode: 'array', tickvals: vals, ticktext: text };
+  }
+  // Invisible companion traces (one per subplot, because unified hover only
+  // lists traces of the hovered subplot): first hover row = Berlin time.
+  // They reuse existing (x, y) pairs so they never change the autorange.
+  function withBerlinTime(traces) {
+    const byAxis = {};
+    traces.forEach((t) => {
+      const pts = (byAxis[t.yaxis || 'y'] ||= new Map());
+      (t.x || []).forEach((xv, i) => {
+        const yv = t.y?.[i];
+        if (yv !== null && yv !== undefined && !pts.has(xv)) pts.set(xv, yv);
+      });
+    });
+    const helpers = Object.entries(byAxis).filter(([, pts]) => pts.size).map(([axis, pts]) => {
+      const x = [...pts.keys()].sort();
+      return { type: 'scatter', mode: 'markers', x, y: x.map((xv) => pts.get(xv)), yaxis: axis, name: '', showlegend: false,
+        customdata: x.map(berlinLabel), marker: { opacity: 0, size: 1 }, hovertemplate: '<b>%{customdata}</b><extra></extra>' };
+    });
+    return [...helpers, ...traces];
+  }
   const toMap = (pts) => new Map((pts || []).map((p) => [p.t, p.v]));
   const diff = (a, b) => {
     const mb = toMap(b);
@@ -85,11 +129,13 @@
   }, extra);
   const bars = (pts, name, yaxis = 'y2', unit = 'MW', names = ['über Prognose', 'unter Prognose']) => {
     const pos = cssVar('--pos'), neg = cssVar('--neg');
-    const p = (pts || []).map((q) => ({ t: q.t, v: q.v >= 0 ? q.v : null }));
+    // Exact zeros belong to neither side (e.g. A86 "balanced"); they would be invisible anyway.
+    const p = (pts || []).map((q) => ({ t: q.t, v: q.v > 0 ? q.v : null }));
     const n = (pts || []).map((q) => ({ t: q.t, v: q.v < 0 ? q.v : null }));
     return [
-      { type: 'bar', x: xs(p), y: ys(p), name: `${name}: ${names[0]}`, yaxis, marker: { color: pos }, hovertemplate: `%{y:+,.0f} ${unit}`, showlegend: false },
-      { type: 'bar', x: xs(n), y: ys(n), name: `${name}: ${names[1]}`, yaxis, marker: { color: neg }, hovertemplate: `%{y:+,.0f} ${unit}`, showlegend: false },
+      // Pre-formatted (de-DE, explicit sign): Plotly's '%{y:+,.0f}' is not applied in unified hover and printed raw values like '-58.431'.
+      { type: 'bar', x: xs(p), y: ys(p), customdata: p.map((q) => sgn(q.v)), name: `${name}: ${names[0]}`, yaxis, marker: { color: pos }, hovertemplate: `%{customdata} ${unit}`, showlegend: false },
+      { type: 'bar', x: xs(n), y: ys(n), customdata: n.map((q) => sgn(q.v)), name: `${name}: ${names[1]}`, yaxis, marker: { color: neg }, hovertemplate: `%{customdata} ${unit}`, showlegend: false },
     ];
   };
   function plot(id, traces, layout) {
@@ -100,7 +146,12 @@
       return;
     }
     if (el.querySelector('.empty')) el.innerHTML = '';
-    Plotly.react(el, traces, layout, PLOT_CFG);
+    const day = $('day').value || todayBerlin();
+    const ticks = timeTicks(day, (el.clientWidth || 800) < 560 ? 4 : 2);
+    // The unified-hover title would show the UTC x value; the Berlin time row
+    // from withBerlinTime replaces it.
+    layout.xaxis = Object.assign({}, layout.xaxis, ticks, { unifiedhovertitle: { text: ' ' } });
+    Plotly.react(el, withBerlinTime(traces), layout, PLOT_CFG);
   }
   const metric = (label, value, small = '') => `<div class="metric"><span>${esc(label)}</span><strong>${value}</strong><small>${small}</small></div>`;
 
@@ -113,7 +164,7 @@
     setSig('sigRes', {
       value: mw(k.res_error_mw),
       sub: `Solar <b>${sgn(tech.Solar)}</b> · On <b>${sgn(tech['Wind Onshore'])}</b> · Off <b>${sgn(tech['Wind Offshore'])}</b><br>vs. ID-Stand 08:00: <b>${sgn(k.res_error_id_mw)}</b> MW`,
-      foot: `<span>MTU ${hhmm(k.as_of)}</span><span>Ø Tag ${sgn(k.day_avg_error_mw)} MW</span>${deltas(k.changes)}`,
+      foot: `<span>MTU ${hhmm(k.as_of)}</span><span title="Mittel der letzten 4 MTUs; die jüngste MTU ist noch eine Schätzung">Ø 1 h ${sgn(k.res_error_1h_mw)} MW</span><span>Ø Tag ${sgn(k.day_avg_error_mw)} MW</span>${deltas(k.changes)}`,
       tag: dir(k.res_error_mw, 300, 'bear'),
     });
     const hasFwd = isNum(k.next4h_revision_avg_mw);
@@ -160,7 +211,7 @@
     setSig('sigResid', {
       value: mw(k.residual_surprise_mw),
       sub: `Residuallast <b>${fmt(k.residual_load_mw)}</b> MW<br>Last Ist − DA <b>${sgn(k.load_error_mw)}</b> MW`,
-      foot: `<span>MTU ${hhmm(k.surprise_as_of)}</span><span>Ø Tag ${sgn(k.day_avg_surprise_mw)} MW</span>`,
+      foot: `<span>MTU ${hhmm(k.surprise_as_of)}</span><span>Ø 1 h ${sgn(k.residual_surprise_1h_mw)} MW</span><span>Ø Tag ${sgn(k.day_avg_surprise_mw)} MW</span>`,
       tag: dir(k.residual_surprise_mw, 500, 'bull'),
     });
     plot('chLoad', [
@@ -191,7 +242,7 @@
     const flags = d.flags || [];
     setSig('sigFlow', {
       value: mw(k.net_import_mw),
-      sub: `Intraday-XB <b>${sgn(k.intraday_xb_mw)}</b> · ungeplant <b>${sgn(k.unscheduled_mw)}</b><br>DA-Fahrplan <b>${sgn(k.da_schedule_mw)}</b> MW`,
+      sub: `Intraday-XB <b>${sgn(k.intraday_xb_mw)}</b> · Phys. − Fahrplan <b>${sgn(k.unscheduled_mw)}</b><br>DA-Fahrplan <b>${sgn(k.da_schedule_mw)}</b> MW`,
       foot: `<span>MTU ${hhmm(k.as_of)}</span><span>${cov.physical_series ?? 0}/${cov.expected ?? 0} Grenzen</span>${flags.length ? `<span class="flag">⚠ ${flags.map((f) => BORDER_NAMES[f.border] || f.border).join(', ')} 0 MW</span>` : ''}`,
       tag: null,
     });
@@ -211,7 +262,7 @@
 
     const rows = (d.table || []).slice().sort((a, c) => Math.abs(c.physical ?? 0) - Math.abs(a.physical ?? 0));
     const flagText = { zero_flow_all_day: '0 MW ganztägig – Ausfall/Wartung?', zero_physical_with_schedule: '0 MW physisch trotz Fahrplan' };
-    $('tFlow').innerHTML = `<thead><tr><th>Grenze</th><th class="num">Physisch</th><th class="num">DA</th><th class="num">Gesamt</th><th class="num">Intraday-XB</th><th class="num">Ungeplant</th><th>Hinweis</th></tr></thead><tbody>` +
+    $('tFlow').innerHTML = `<thead><tr><th>Grenze</th><th class="num">Physisch</th><th class="num">DA</th><th class="num">Gesamt</th><th class="num">Intraday-XB</th><th class="num" title="Pro Grenze: v. a. Ring-/Transitflüsse (Core: Fahrplan ist rechnerische Zerlegung). Summe: Regelenergie-Austausch, Redispatch, Abweichungen – Ringflüsse heben sich auf.">Phys. − Fahrplan</th><th>Hinweis</th></tr></thead><tbody>` +
       rows.map((r) => `<tr><td>${esc(BORDER_NAMES[r.border] || r.border)}</td><td class="num">${sgn(r.physical)}</td><td class="num">${sgn(r.scheduled)}</td><td class="num">${sgn(r.total)}</td><td class="num">${sgn(r.intraday)}</td><td class="num">${sgn(r.unscheduled)}</td><td>${r.flag ? `<span class="flag">⚠ ${esc(flagText[r.flag] || r.flag)}</span>` : ''}</td></tr>`).join('') +
       `<tr><td><b>Summe</b></td><td class="num"><b>${sgn(k.net_import_mw)}</b></td><td class="num"><b>${sgn(k.da_schedule_mw)}</b></td><td class="num"><b>${sgn(k.total_schedule_mw)}</b></td><td class="num"><b>${sgn(k.intraday_xb_mw)}</b></td><td class="num"><b>${sgn(k.unscheduled_mw)}</b></td><td class="muted">MTU ${hhmm(k.as_of)}</td></tr></tbody>`;
     $('srcFlow').innerHTML = [
@@ -274,12 +325,14 @@
     const k = d.kpi || {}, s = d.series || {}, src = d.sources || {};
     const short = k.imbalance_state === 'deficit', long = k.imbalance_state === 'surplus';
     const price = k.price_mode === 'single' ? k.imbalance_price_eur_mwh : k.imbalance_price_short_eur_mwh;
+    // Same-day reBAP is an operational estimate; the settled price comes later.
+    const prelim = k.price_status !== 'final';
     const act = isNum(k.afrr_de_mw) ? `aFRR DE <b>${sgn(k.afrr_de_mw)}</b> MW`
       : isNum(k.afrr_partial_mw) ? `aFRR <b>${sgn(k.afrr_partial_mw)}</b> MW <span class="muted">(ohne ${esc((k.afrr_missing_areas || []).join(', '))})</span>` : 'aFRR —';
     setSig('sigSys', {
       value: isNum(k.imbalance_volume_mwh) ? `${sgn(k.imbalance_volume_mwh)}<small>MWh</small>` : '—',
-      sub: `reBAP <b>${fmt(price, NF2)}</b> €/MWh · ${short ? 'System kurz' : long ? 'System lang' : '—'}<br>${act}${isNum(k.nrv_saldo_mw) ? ` · NRV <b>${sgn(k.nrv_saldo_mw)}</b>` : ''}`,
-      foot: `<span>MTU ${hhmm(k.as_of)}</span><span>≈ ${sgn(k.imbalance_avg_mw)} MW</span>${deltas(k.changes)}`,
+      sub: `reBAP${prelim ? ' (vorl.)' : ''} <b>${fmt(price, NF2)}</b> €/MWh · ${short ? 'System kurz' : long ? 'System lang' : k.imbalance_state === 'balanced' ? 'ausgeglichen' : '—'}<br>${act}${isNum(k.nrv_saldo_mw) ? ` · NRV <b>${sgn(k.nrv_saldo_mw)}</b>` : ''}`,
+      foot: `<span>MTU ${hhmm(k.as_of)}</span><span>≈ ${sgn(k.imbalance_avg_mw)} MW</span><span>Ø 1 h ${sgn(k.imbalance_1h_avg_mw)} MW</span>${deltas(k.changes)}`,
       tag: short ? { cls: 'bull', text: 'kurz' } : long ? { cls: 'bear', text: 'lang' } : null,
     });
 
@@ -287,7 +340,7 @@
       ...bars(s['Net imbalance volume'], 'Bilanz', 'y', 'MWh', ['lang', 'kurz']).map((t, i) => Object.assign(t, { showlegend: true, name: i === 0 ? 'System lang (MWh)' : 'System kurz (MWh)' })),
     ];
     if (k.price_mode === 'single' || !(s['Imbalance price long'] || []).length) {
-      traces.push(line(s['Imbalance price'], 'reBAP €/MWh', cssVar('--s2'), 'solid', 'y2', { hovertemplate: '%{y:,.2f} €/MWh' }));
+      traces.push(line(s['Imbalance price'], prelim ? 'reBAP €/MWh (vorläufig)' : 'reBAP €/MWh', cssVar('--s2'), 'solid', 'y2', { hovertemplate: '%{y:,.2f} €/MWh' }));
     } else {
       traces.push(line(s['Imbalance price long'], 'Preis lang', cssVar('--s2'), 'solid', 'y2', { hovertemplate: '%{y:,.2f} €/MWh' }));
       traces.push(line(s['Imbalance price short'], 'Preis kurz', cssVar('--s4'), 'dash', 'y2', { hovertemplate: '%{y:,.2f} €/MWh' }));
@@ -305,7 +358,7 @@
       bargap: 0.15,
     }));
     $('mSys').innerHTML = [
-      metric('reBAP jetzt', `${fmt(price, NF2)} €/MWh`, `MTU ${hhmm(k.price_as_of)}`),
+      metric(prelim ? 'reBAP jetzt (vorläufig)' : 'reBAP jetzt', `${fmt(price, NF2)} €/MWh`, `MTU ${hhmm(k.price_as_of)}${prelim ? ' · Schätzung, Abrechnungspreis folgt' : ' · final'}`),
       metric('reBAP Ø / Max / Min', `${fmt(k.day_avg_price_eur_mwh)} / ${fmt(k.day_max_price_eur_mwh)} / ${fmt(k.day_min_price_eur_mwh)}`, '€/MWh seit 00:00'),
       metric('aFRR netto', isNum(k.afrr_de_mw) ? `${sgn(k.afrr_de_mw)} MW` : isNum(k.afrr_partial_mw) ? `${sgn(k.afrr_partial_mw)} MW*` : '—', esc(k.activation_source || 'keine Quelle')),
       metric('NRV-Saldo', isNum(k.nrv_saldo_mw) ? `${sgn(k.nrv_saldo_mw)} MW` : '—', isNum(k.nrv_saldo_mw) ? (k.nrv_state === 'deficit' ? 'Unterdeckung' : 'Überdeckung') : 'netztransparenz.de nicht konfiguriert'),

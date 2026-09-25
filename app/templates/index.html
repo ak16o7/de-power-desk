@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <meta name="robots" content="noindex,nofollow" />
   <title>DE Power Desk</title>
-  <link rel="stylesheet" href="/static/style.css?v=5.0.0" />
+  <link rel="stylesheet" href="/static/style.css?v=5.1.0" />
   <script src="/static/plotly.min.js"></script>
 </head>
 <body data-refresh="__REFRESH_SECONDS__">
@@ -66,7 +66,7 @@
   <section class="grid">
     <article class="panel" id="pRes">
       <div class="panel-head">
-        <div><h2>Erneuerbare: Ist vs. Prognosen</h2><p>Ist (A75) gegen DA-Prognose (A01, D-1 18:00), ID-Stand (A40, D 08:00) und laufende Prognose (A18). Balken: Ist − DA.</p></div>
+        <div><h2>Erneuerbare: Ist vs. Prognosen</h2><p>Ist (A75) gegen DA-Prognose (A01, D-1 18:00), ID-Stand (A40, D 08:00) und laufende Prognose (A18). Balken: Ist − DA. Die jüngsten Ist-Werte sind Hochrechnungen und werden mit Messwerten nachgezogen – deshalb zusätzlich Ø 1 h.</p></div>
         <div class="panel-tools"><div class="seg" id="resTech" role="group" aria-label="Technologie">
           <button aria-pressed="true" data-v="RES">Gesamt</button><button aria-pressed="false" data-v="Solar">Solar</button><button aria-pressed="false" data-v="Wind Onshore">Onshore</button><button aria-pressed="false" data-v="Wind Offshore">Offshore</button>
         </div></div>
@@ -85,7 +85,7 @@
 
     <article class="panel wide" id="pFlow">
       <div class="panel-head">
-        <div><h2>Grenzflüsse DE-LU</h2><p>Physisch (A11) vs. DA-Fahrplan (A09/A01) vs. Gesamtfahrplan inkl. Intraday (A09/A05). Positiv = Import nach DE-LU. Intraday-XB = Gesamt − DA; ungeplant (Ringflüsse, Regelenergie) = physisch − Gesamt.</p></div>
+        <div><h2>Grenzflüsse DE-LU</h2><p>Physisch (A11) vs. DA-Fahrplan (A09/A01) vs. Gesamtfahrplan inkl. Intraday (A09/A05). Positiv = Import nach DE-LU. Intraday-XB = Gesamt − DA. Phys. − Fahrplan: in der Summe über alle Grenzen heben sich Ringflüsse auf – übrig bleiben Regelenergie-Austausch (IGCC/PICASSO/MARI), grenzüberschreitender Redispatch, Abweichungen und HVDC-Verluste, die in Handelsfahrplänen per Definition fehlen. Pro Grenze vor allem Ring-/Transitflüsse; an Core-Grenzen ist der Fahrplan aber eine rechnerische Zerlegung der Nettopositionen.</p></div>
         <div class="panel-tools"><select id="flowBorder" aria-label="Grenze"><option value="TOTAL">Summe alle Grenzen</option></select></div>
       </div>
       <div class="chart" id="chFlow"></div>
@@ -120,7 +120,7 @@
 
     <article class="panel wide" id="pSys">
       <div class="panel-head">
-        <div><h2>Systembilanz, reBAP &amp; Regelenergie</h2><p>Bilanz: ENTSO-E A86 (MWh je 15 min, negativ = System kurz). reBAP: A85. aFRR/mFRR deutschlandweit: netztransparenz.de, falls konfiguriert – sonst ENTSO-E A24, dort fehlt Amprion.</p></div>
+        <div><h2>Systembilanz, reBAP &amp; Regelenergie</h2><p>Bilanz: ENTSO-E A86, Summe der vier Regelzonen (MWh je 15 min; positiv = System lang, negativ = System kurz). reBAP: A85 – am selben Tag eine vorläufige Schätzung, der Abrechnungspreis folgt später. aFRR/mFRR deutschlandweit: netztransparenz.de, falls konfiguriert – sonst ENTSO-E A24, dort fehlt Amprion.</p></div>
       </div>
       <div class="chart tall" id="chSys"></div>
       <div class="metrics" id="mSys"></div>
@@ -134,6 +134,6 @@
     <span id="version"></span>
   </footer>
 </main>
-<script src="/static/app.js?v=5.0.0"></script>
+<script src="/static/app.js?v=5.1.0"></script>
 </body>
 </html>
