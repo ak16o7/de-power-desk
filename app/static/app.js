@@ -491,6 +491,7 @@
   }
 
   async function init() {
+    $('year').textContent = new Date().toLocaleDateString('de-DE', { year: 'numeric', timeZone: 'Europe/Berlin' });
     $('day').value = todayBerlin();
     $('day').max = new Date(Date.now() + 2 * 864e5).toLocaleDateString('sv-SE', { timeZone: 'Europe/Berlin' });
     $('day').addEventListener('change', () => { $('flowBorder').length = 1; loadAll(); });
