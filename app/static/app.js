@@ -262,7 +262,7 @@
 
     const rows = (d.table || []).slice().sort((a, c) => Math.abs(c.physical ?? 0) - Math.abs(a.physical ?? 0));
     const flagText = { zero_flow_all_day: '0 MW ganztägig – Ausfall/Wartung?', zero_physical_with_schedule: '0 MW physisch trotz Fahrplan' };
-    $('tFlow').innerHTML = `<thead><tr><th>Grenze</th><th class="num">Physisch</th><th class="num">DA</th><th class="num">Gesamt</th><th class="num">Intraday-XB</th><th class="num" title="Pro Grenze: v. a. Ring-/Transitflüsse (Core: Fahrplan ist rechnerische Zerlegung). Summe: Regelenergie-Austausch, Redispatch, Abweichungen – Ringflüsse heben sich auf.">Phys. − Fahrplan</th><th>Hinweis</th></tr></thead><tbody>` +
+    $('tFlow').innerHTML = `<thead><tr><th>Grenze</th><th class="num">Physisch</th><th class="num">DA</th><th class="num">Gesamt</th><th class="num">Intraday-XB</th><th class="num" title="Pro Grenze: v. a. Ring-/Transitflüsse (Core: Fahrplan ist rechnerische Zerlegung). Summe: Ringflüsse heben sich auf; Rest = Redispatch/Countertrading, Regelenergie, Datenabweichungen – kein Handelssignal.">Phys. − Fahrplan</th><th>Hinweis</th></tr></thead><tbody>` +
       rows.map((r) => `<tr><td>${esc(BORDER_NAMES[r.border] || r.border)}</td><td class="num">${sgn(r.physical)}</td><td class="num">${sgn(r.scheduled)}</td><td class="num">${sgn(r.total)}</td><td class="num">${sgn(r.intraday)}</td><td class="num">${sgn(r.unscheduled)}</td><td>${r.flag ? `<span class="flag">⚠ ${esc(flagText[r.flag] || r.flag)}</span>` : ''}</td></tr>`).join('') +
       `<tr><td><b>Summe</b></td><td class="num"><b>${sgn(k.net_import_mw)}</b></td><td class="num"><b>${sgn(k.da_schedule_mw)}</b></td><td class="num"><b>${sgn(k.total_schedule_mw)}</b></td><td class="num"><b>${sgn(k.intraday_xb_mw)}</b></td><td class="num"><b>${sgn(k.unscheduled_mw)}</b></td><td class="muted">MTU ${hhmm(k.as_of)}</td></tr></tbody>`;
     $('srcFlow').innerHTML = [
@@ -361,7 +361,7 @@
       metric(prelim ? 'reBAP jetzt (vorläufig)' : 'reBAP jetzt', `${fmt(price, NF2)} €/MWh`, `MTU ${hhmm(k.price_as_of)}${prelim ? ' · Schätzung, Abrechnungspreis folgt' : ' · final'}`),
       metric('reBAP Ø / Max / Min', `${fmt(k.day_avg_price_eur_mwh)} / ${fmt(k.day_max_price_eur_mwh)} / ${fmt(k.day_min_price_eur_mwh)}`, '€/MWh seit 00:00'),
       metric('aFRR netto', isNum(k.afrr_de_mw) ? `${sgn(k.afrr_de_mw)} MW` : isNum(k.afrr_partial_mw) ? `${sgn(k.afrr_partial_mw)} MW*` : '—', esc(k.activation_source || 'keine Quelle')),
-      metric('NRV-Saldo', isNum(k.nrv_saldo_mw) ? `${sgn(k.nrv_saldo_mw)} MW` : '—', isNum(k.nrv_saldo_mw) ? (k.nrv_state === 'deficit' ? 'Unterdeckung' : 'Überdeckung') : 'netztransparenz.de nicht konfiguriert'),
+      metric('NRV-Saldo', isNum(k.nrv_saldo_mw) ? `${sgn(k.nrv_saldo_mw)} MW` : '—', isNum(k.nrv_saldo_mw) ? `${k.nrv_state === 'deficit' ? 'Unterdeckung' : k.nrv_state === 'surplus' ? 'Überdeckung' : 'ausgeglichen'} · MTU ${hhmm(k.nrv_as_of)}` : 'netztransparenz.de nicht konfiguriert'),
     ].join('');
     const ntpOk = src.NTP?.state === 'ok';
     $('srcSys').innerHTML = Object.entries(src).map(([key, v]) => {

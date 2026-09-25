@@ -25,8 +25,12 @@ import requests
 
 TOKEN_URL = "https://identity.netztransparenz.de/users/connect/token"
 BASE_URL = os.getenv("NTP_BASE_URL", "https://ds.netztransparenz.de/api/v1/data")
-CLIENT_ID = os.getenv("NTP_CLIENT_ID", "").strip()
-CLIENT_SECRET = os.getenv("NTP_CLIENT_SECRET", "").strip()
+
+
+def _credentials() -> tuple[str, str]:
+    """Read at call time: app.main loads .env only AFTER importing this module,
+    so module-level constants silently disabled netztransparenz for local runs."""
+    return os.getenv("NTP_CLIENT_ID", "").strip(), os.getenv("NTP_CLIENT_SECRET", "").strip()
 TIMEOUT = int(os.getenv("NTP_HTTP_TIMEOUT", "30"))
 
 UTC = timezone.utc
@@ -40,15 +44,17 @@ _last_call = [0.0]
 
 
 def configured() -> bool:
-    return bool(CLIENT_ID and CLIENT_SECRET)
+    client_id, client_secret = _credentials()
+    return bool(client_id and client_secret)
 
 
 def _get_token(session: requests.Session) -> str:
     with _token_lock:
         if _token["value"] and time.time() < _token["expires"] - 60:
             return _token["value"]
-        r = session.post(TOKEN_URL, data={"grant_type": "client_credentials", "client_id": CLIENT_ID,
-                                           "client_secret": CLIENT_SECRET}, timeout=TIMEOUT)
+        client_id, client_secret = _credentials()
+        r = session.post(TOKEN_URL, data={"grant_type": "client_credentials", "client_id": client_id,
+                                           "client_secret": client_secret}, timeout=TIMEOUT)
         if not r.ok:
             raise RuntimeError(f"netztransparenz token: HTTP {r.status_code}")
         data = r.json()
