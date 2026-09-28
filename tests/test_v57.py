@@ -23,13 +23,16 @@ class PresentationTests(unittest.TestCase):
         panels = re.findall(r'<article class="panel[^"]*" id="(p\w+)">(.*?)</article>', self.html, re.S)
         self.assertEqual([p for p, _ in panels], ['pRes', 'pLoad', 'pFlow', 'pOut', 'pSys'])
         for pid, body in panels:
-            self.assertIn('<summary>Quellen &amp; Methodik</summary>', body, pid)
+            self.assertIn('<summary><span data-lang="de">Quellen &amp; Methodik</span><span data-lang="en">Sources &amp; methodology</span></summary>', body, pid)
 
     def test_descriptions_are_one_plain_sentence_without_codes(self):
-        for h2, p in re.findall(r'<h2>(.*?)</h2><p>(.*?)</p>', self.html):
-            self.assertLess(len(p), 160, h2)
-            self.assertIsNone(re.search(r'\bA\d\d\b', p), h2)      # ENTSO-E codes live in the methodology
-        self.assertIn('<h2>Kraftwerksverfügbarkeit</h2>', self.html)
+        found = re.findall(r'<p><span data-lang="de">(.*?)</span><span data-lang="en">(.*?)</span></p>', self.html)
+        self.assertEqual(len(found), 5)
+        for de, en in found:                                        # v5.8: both languages
+            for p in (de, en):
+                self.assertLess(len(p), 160, p)
+                self.assertIsNone(re.search(r'\bA\d\d\b', p), p)  # ENTSO-E codes live in the methodology
+        self.assertIn('<span data-lang="de">Kraftwerksverfügbarkeit</span><span data-lang="en">Power plant availability</span>', self.html)
 
     def test_keys_toggle_series_and_zoom_is_linked(self):
         self.assertIn("button.key[data-chart]", self.js)
