@@ -10,7 +10,7 @@
   <link rel="apple-touch-icon" href="/static/apple-touch-icon.png?v=1" />
   <meta name="theme-color" content="#111110" />
   <script>/* apply a stored theme before first paint (no flash) */try{var t=localStorage.getItem('dpd-theme');document.documentElement.dataset.theme=(t==='light'||t==='dark')?t:(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark');}catch(e){}</script>
-  <link rel="stylesheet" href="/static/style.css?v=5.7.0" />
+  <link rel="stylesheet" href="/static/style.css?v=5.7.1" />
   <script src="/static/plotly.min.js?v=3.3.1"></script>
 </head>
 <body data-refresh="__REFRESH_SECONDS__">
@@ -176,8 +176,8 @@
         <summary>Quellen &amp; Methodik</summary>
         <ul>
           <li><b>Systembilanz:</b> Summe der vier deutschen Regelzonen aus ENTSO-E (A86), als mittlere Leistung je Viertelstunde (MWh × 4). Plus = System lang (Überdeckung), minus = System kurz (Unterdeckung).</li>
-          <li><b>Vorläufig:</b> Vollständig liegt die ENTSO-E-Summe im Median erst rund 30 Minuten nach Ende der Viertelstunde vor. Bis dahin kommen die fehlenden Regelzonen aus dem RZ-Saldo der Netzbetreiber auf netztransparenz.de (rund 15 Minuten), notfalls aus dem NRV-Saldo. Es ist dieselbe Größe; der offizielle Wert ersetzt den vorläufigen automatisch.</li>
-          <li><b>reBAP:</b> ENTSO-E (A85). Am selben Tag eine Schätzung der Netzbetreiber, der abgerechnete Preis folgt Tage bis Wochen später.</li>
+          <li><b>Vorläufig:</b> Vollständig liegt die ENTSO-E-Summe im Median rund 30 Minuten nach Ende der Viertelstunde vor, an manchen Abenden erst nach über einer Stunde. Bis dahin kommen die fehlenden Regelzonen aus dem RZ-Saldo der Netzbetreiber auf netztransparenz.de (rund 15 Minuten), notfalls aus dem NRV-Saldo. Es ist dieselbe Größe: Im Abgleich 26.–28.09.2026 (267 Viertelstunden) wichen 262 höchstens 10 MW vom offiziellen Wert ab, meist 0 MW; fünf (Amprion) um 100–170 MW. Der offizielle Wert ersetzt den vorläufigen automatisch.</li>
+          <li><b>reBAP:</b> am selben Tag der Schätzer der Netzbetreiber (AEP-Schätzer). ENTSO-E (A85) veröffentlicht exakt dieselben Werte, zeitweise aber bis zu einer Stunde später; die jüngsten Viertelstunden kommen deshalb direkt von netztransparenz.de. Der abgerechnete Preis folgt Tage bis Wochen später.</li>
           <li><b>NRV-Saldo:</b> Saldo des deutschen Netzregelverbunds, also der gesamte Regelbedarf (positiv = Unterdeckung, es muss hochgeregelt werden). Er entspricht der Systembilanz mit umgekehrtem Vorzeichen.</li>
           <li><b>aFRR / mFRR:</b> tatsächlich aktivierte Regelenergie, Hochregeln minus Tiefregeln, für ganz Deutschland von netztransparenz.de. Ohne Zugang dort aus ENTSO-E, wo Amprion fehlt.</li>
         </ul>
@@ -193,6 +193,6 @@
     <div class="copy">© <span id="year">2026</span> Kaan Akdere · DE Power Desk</div>
   </footer>
 </main>
-<script src="/static/app.js?v=5.7.0"></script>
+<script src="/static/app.js?v=5.7.1"></script>
 </body>
 </html>
