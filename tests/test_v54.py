@@ -111,7 +111,7 @@ class FrontendV54Tests(unittest.TestCase):
     def test_preliminary_bars_are_marked(self):
         js = Path('app/static/app.js').read_text(encoding='utf-8')
         self.assertIn("s['Net imbalance volume nowcast']", js)
-        self.assertIn("vorläufig (netztransparenz)", js)
+        self.assertIn("text: 'vorläufig'", js)                # v5.6: band label instead of a legend swatch
         self.assertNotIn("pattern:", js)                       # no hatching (v5.4.1)
         self.assertIn("prelimSet", js)                          # same bar traces, per-point styling
         self.assertIn("opacity: arr.map((q) => (isPre(q) ? PRELIM_OPACITY : 1))", js)

@@ -126,6 +126,10 @@ td.wrapcell{white-space:normal;min-width:180px;max-width:360px}
 .count{font-size:12px;color:var(--muted)}
 details.method{margin-top:10px;font-size:12px;color:var(--text-2)}
 details.method summary{cursor:pointer;color:var(--muted)}
+details.method ul{margin:8px 0 0;padding-left:18px;line-height:1.55;max-width:880px}
+details.method li{margin:3px 0}
+details.method p{margin:8px 0 0}
+.sources:empty{display:none}
 footer{color:var(--muted);font-size:12px;padding:6px 0 28px;line-height:1.6}
 footer a{color:var(--text-2)}
 footer .copy{margin-top:6px;color:var(--text-2)}
