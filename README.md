@@ -1,4 +1,4 @@
-# DE Power Desk v5.5
+# DE Power Desk v5.6
 
 Ein Intraday-Dashboard für den deutschen Strommarkt auf Basis von ENTSO-E-Daten, optional ergänzt um netztransparenz.de. Es läuft mit FastAPI und lokal gebündeltem Plotly und wird auf Render mit Docker betrieben. Routen, Umgebungsvariablen und Deployment sind zu v4.4.1 kompatibel.
 
@@ -11,9 +11,15 @@ Ein Intraday-Dashboard für den deutschen Strommarkt auf Basis von ENTSO-E-Daten
 | **Residuallast vs. DA** | (Last − EE) Ist minus (Last − EE) DA, dazu der Lastprognosefehler | Zeigt, was konventionelle Kraftwerke und Importe zusätzlich decken müssen |
 | **Netto-Import** | Physischer Fluss, DA-Fahrplan, Gesamtfahrplan (A09/A05). Intraday-XB = Gesamt − DA, Phys. − Fahrplan = physisch − Gesamt | Trennt grenzüberschreitenden Intraday-Handel vom Rest. In der Summe über alle Grenzen ist „Phys. − Fahrplan“ kein Ringfluss (der hebt sich auf), sondern vor allem Regelenergie-Austausch und Redispatch. Leitungen, die den ganzen Tag 0 MW führen, werden markiert. |
 | **Kraftwerke DE** | Nicht verfügbare Leistung in DE-LU, davon ungeplant, Veränderung zum gleichen Zeitpunkt gestern, neue oder geänderte Meldungen der letzten 24 h | Die Veränderung und neue Meldungen sind das Signal, nicht der absolute Bestand |
-| **Systembilanz / reBAP** | A86-Bilanz (negativ = System kurz), reBAP (A85), aFRR, NRV-Saldo | Ob das System gerade kurz oder lang ist |
+| **Systembilanz / reBAP** | Systembilanz in MW (+ lang, − kurz; A86, die jüngsten Viertelstunden vorläufig von netztransparenz), reBAP (A85), aFRR/mFRR | Ob das System gerade kurz oder lang ist |
 
 Die Markierung „bullish/bearish“ ist eine einfache Desk-Heuristik: EE-Abweichung ab ±300 MW, Residuallast ab ±500 MW, Kraftwerks-Δ ab ±300 MW. Sie ist keine Handelsempfehlung.
+
+## Neu in v5.6
+
+- **Systembilanz neu aufgeräumt.** Eine Größe, ein Vorzeichen, eine Einheit: Die Balken zeigen die Systembilanz in MW (A86-MWh × 4, + = lang). Die separate NRV-Linie entfällt – sie war dieselbe Größe mit umgekehrtem Vorzeichen. Stattdessen nehmen die Balken je Viertelstunde die frischeste Quelle: offiziell A86, sonst RZ-Saldo je Regelzone, sonst NRV-Saldo (live geprüft: NRV = Summe der RZ-Saldi, max. 3 MW Abweichung). Vorläufige Viertelstunden liegen in einem dezenten „vorläufig“-Band.
+- **Keine Legende, keine Codes im Fließtext.** Jeder Teilgraph beschriftet sich selbst (Titel, Einheit, Farbschlüssel). Die Beschreibung ist ein Satz; Quellen, Verzüge und Sonderfälle stehen eingeklappt unter „Quellen & Methodik“. Status-Chips erscheinen nur noch bei Problemen.
+- **Kacheln:** Systembilanz jetzt, reBAP jetzt, reBAP heute (Ø/Max/Min), Regelenergie jetzt (aFRR/mFRR). mFRR wird nur gezeichnet, wenn sie am Tag abgerufen wurde.
 
 ## Neu in v5.5
 
@@ -30,7 +36,7 @@ Die Markierung „bullish/bearish“ ist eine einfache Desk-Heuristik: EE-Abweic
 ## Neu in v5.4
 
 - **Vorläufige Systembilanz aus netztransparenz.** Die A86-Summe wartet auf den langsamsten Netzbetreiber (meist TenneT, Median 33 min). Die Netzbetreiber veröffentlichen denselben Wert als RZ-Saldo bei netztransparenz früher (TenneT Median 16 min). Live geprüft: A86 = −RZ-Saldo ÷ 4, exakt für 50Hertz, TenneT, TransnetBW, r = −0,989 für Amprion; Stichprobe 25.09. 21:00: vorläufig 67,35 MWh, später A86 67,24 MWh. Die fehlenden Regelzonen der letzten Viertelstunden werden daraus ergänzt und als blasse Balken mit Rand („vorläufig“) gezeigt – gleiche Breite und Position wie die übrigen Balken; sobald A86 vollständig ist, ersetzt es die Werte. Der Stundenschnitt schließt sie ein (mit * markiert). Die A86-Kennzahl selbst bleibt reines ENTSO-E.
-- **Abschalten ohne Code:** In Render unter Environment `NTP_IMBALANCE_NOWCAST=0` setzen – danach verhält sich die Seite exakt wie v5.3.
+- **Abschalten ohne Code:** In Render unter Environment `NTP_IMBALANCE_NOWCAST=0` setzen – danach zeigen die Balken nur offizielle A86-Werte (ab v5.6 ohne NRV-Linie; die Kachel „Systembilanz jetzt“ nutzt den NRV-Saldo weiterhin).
 
 ## Neu in v5.3
 
@@ -104,7 +110,7 @@ python -m uvicorn app.main:app --port 8000
 
 ```bash
 pip install -r requirements-dev.txt
-python -m unittest discover -s tests -v                                  # offline, 148 Tests
+python -m unittest discover -s tests -v                                  # offline, 153 Tests
 python scripts/live_smoke.py --env-file .env --day 2026-09-22            # echter ENTSO-E-Abgleich
 python scripts/ntp_check.py --day 2026-09-22                             # netztransparenz.de-Zugang prüfen
 python scripts/smoke_http.py --base-url https://de-power-desk.onrender.com --day 2026-09-22 --user … --password …
