@@ -256,7 +256,7 @@ class TransportTests(unittest.TestCase):
 class FrontendV52Tests(unittest.TestCase):
     def test_frontend_polls_freshness_and_shows_age(self):
         js = Path('app/static/app.js').read_text(encoding='utf-8')
-        for needle in ('/api/freshness', 'system_now_mw', '`Stand ${', 'min alt', 'loadPanels(changed)'):
+        for needle in ('/api/freshness', 'system_now_mw', "asOf: ['Stand {t}', 'As of {t}']", 'min alt', 'loadPanels(changed)'):
             self.assertIn(needle, js)
 
 

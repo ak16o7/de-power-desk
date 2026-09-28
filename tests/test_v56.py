@@ -50,12 +50,14 @@ class SystembilanzPanelTests(unittest.TestCase):
         self.assertIn('q.v * 4', f)                           # A86 MWh per 15 min -> MW
         self.assertNotIn('(MWh)', f)
         # v5.7: NRV-Saldo is back, next to aFRR/mFRR (same German sign: + = hochregeln)
-        self.assertIn("lk('NRV-Saldo', cN, 'dot')", f)
-        self.assertIn("head('chSys', 'Systembilanz', 'MW · + lang, − kurz'", f)
-        self.assertIn("head('chReg', 'Regelenergie', 'MW · + = hochregeln (System kurz)'", f)
+        self.assertIn("lk(tr('nrv'), cN, 'dot')", f)
+        self.assertIn("head('chSys', tr('sysTitle'), tr('sysNote')", f)
+        self.assertIn("head('chReg', tr('regTitle'), tr('regNote')", f)
+        for pair in ("sysNote: ['MW · + lang, − kurz', 'MW · + long, − short']", "regNote: ['MW · + = hochregeln (System kurz)', 'MW · + = upward regulation (system short)']"):
+            self.assertIn(pair, self.js)
 
     def test_description_is_short_and_methodology_folded(self):
-        p = re.search(r'<h2>Systembilanz, reBAP &amp; Regelenergie</h2><p>(.*?)</p>', self.html).group(1)
+        p = re.search(r'<h2><span data-lang="de">Systembilanz, reBAP &amp; Regelenergie</span>.*?</h2>\s*<p><span data-lang="de">(.*?)</span>', self.html, re.S).group(1)
         self.assertLess(len(p), 140)
         self.assertNotIn('RZ-Saldo', p)
         self.assertIn('<details class="method" id="methSys">', self.html)
