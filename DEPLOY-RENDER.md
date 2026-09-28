@@ -1,6 +1,6 @@
 # Update des bestehenden Render-Dienstes
 
-> **v5.3 → v5.4:** keine Pflicht-Variablen. Neu ist die vorläufige Systembilanz aus netztransparenz (nur aktiv, wenn `NTP_CLIENT_ID/SECRET` gesetzt sind). **Zurück zum alten Verhalten, ohne Code:** Render → Environment → `NTP_IMBALANCE_NOWCAST` = `0` → Save; Render startet den Dienst neu. **Komplett zurück:** auf GitHub im Pull Request von v5.4 „Revert“ klicken und den erzeugten Pull Request mergen, oder den Tag `v5.3` erneut deployen.
+> **v5.3 → v5.4.1:** keine Pflicht-Variablen. Neu ist die vorläufige Systembilanz aus netztransparenz (nur aktiv, wenn `NTP_CLIENT_ID/SECRET` gesetzt sind). **Zurück zum alten Verhalten, ohne Code:** Render → Environment → `NTP_IMBALANCE_NOWCAST` = `0` → Save; Render startet den Dienst neu. **Komplett zurück:** auf GitHub im Pull Request von v5.4.1 „Revert“ klicken und den erzeugten Pull Request mergen, oder den Tag `v5.3` erneut deployen.
 >
 > **v5.1 → v5.2:** keine Pflicht-Variablen. Der Dienst aktualisiert die Daten jetzt selbst im Hintergrund. Auf dem Free-Tarif muss dafür ein Uptime-Monitor (z. B. UptimeRobot) **`/health`** alle 5–10 Minuten abrufen – nicht `/` (würde bei aktivem Login 401 liefern). Optional: `BACKGROUND_REFRESH=0` schaltet die Hintergrund-Aktualisierung ab (dann Verhalten wie v5.1); `REFRESH_*_SECONDS` und `STALE_MAX_SECONDS` siehe README. Nach dem Deploy: `/health` zeigt `"version":"5.2.0"`, `"background_refresh":true` und nach ~1 min unter `refreshed` alle fünf Panels.
 >
