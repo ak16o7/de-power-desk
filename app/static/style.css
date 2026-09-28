@@ -97,9 +97,28 @@ button,input,select{font:inherit;color:inherit}
 .seg button{border:0;border-radius:0;min-height:30px;padding:4px 10px;cursor:pointer;font-size:12px;color:var(--text-2)}
 .seg button+button{border-left:1px solid var(--line)}
 .seg button[aria-pressed=true]{background:var(--surface-2);color:var(--text);font-weight:700}
-.chart{height:330px;margin-top:8px}
-.chart.tall{height:400px}
-.chart.short{height:230px}
+/* Charts: one HTML head per chart (title, unit, keys), then the plot.
+   Heights include the x-axis band; only the last chart of a panel shows it. */
+.chart{height:300px}
+#chRes,#chLoad{height:240px}
+#chResDiff,#chLoadDiff{height:150px}
+#chFlow{height:300px}
+#chOut{height:230px}
+#chSys{height:190px}
+#chRebap{height:120px}
+#chReg{height:170px}
+.chead{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:4px 16px;min-height:22px;margin:14px 0 2px}
+.chead:empty{display:none}
+.chead .ct{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 8px;font-size:12px}
+.chead .ct b{color:var(--text);font-weight:650}
+.chead .ct span{color:var(--muted);font-size:11px}
+.chead .ck{display:flex;flex-wrap:wrap;gap:2px 14px}
+.key{display:inline-flex;align-items:center;gap:6px;font:inherit;font-size:11px;color:var(--text-2);background:none;border:0;padding:2px 0;min-height:22px}
+button.key{cursor:pointer}
+button.key[aria-pressed="false"]{opacity:.45;text-decoration:line-through}
+button.key:focus-visible{outline:2px solid var(--focus);outline-offset:2px;border-radius:4px}
+.key svg{flex:none}
+.subhead{font-size:13px;margin:16px 0 0}
 .metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:10px}
 .metric{background:var(--surface-2);border-radius:8px;padding:8px 10px;min-width:0}
 .metric span{display:block;font-size:11px;color:var(--muted)}
@@ -140,7 +159,7 @@ footer .copy{margin-top:6px;color:var(--text-2)}
   .wrap{padding:0 16px}
   .signals{grid-template-columns:1fr 1fr;gap:8px}
   .sig{padding:10px}.sig-value{font-size:20px}
-  .chart{height:280px}.chart.tall{height:320px}
+  #chRes,#chLoad{height:210px}#chResDiff,#chLoadDiff{height:130px}#chFlow{height:250px}#chOut{height:210px}#chSys{height:170px}#chRebap{height:110px}#chReg{height:150px}
   .brand span{display:none}
   .top .wrap{gap:8px 12px}
   .status .detail{display:none}
