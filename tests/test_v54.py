@@ -119,7 +119,8 @@ class FrontendV54Tests(unittest.TestCase):
     def test_hover_values_carry_units_and_outage_label_is_unambiguous(self):
         js = Path('app/static/app.js').read_text(encoding='utf-8')
         self.assertIn("hovertemplate: `%{y:,.0f} MW`", js)
-        self.assertIn("Nicht verfügbare Leistung ${ZONE_NAMES[z]}", js)
+        # v5.5: one chart for all zones; the axis says what the lines are
+        self.assertIn("title: { text: 'MW nicht verfügbar'", js)
         self.assertNotIn("`${ZONE_NAMES[z]} nicht verfügbar`", js)
 
 
