@@ -112,7 +112,15 @@ class FrontendV54Tests(unittest.TestCase):
         js = Path('app/static/app.js').read_text(encoding='utf-8')
         self.assertIn("s['Net imbalance volume nowcast']", js)
         self.assertIn("vorläufig (netztransparenz)", js)
-        self.assertIn("pattern: { shape: '/'", js)
+        self.assertNotIn("pattern:", js)                       # no hatching (v5.4.1)
+        self.assertIn("prelimSet", js)                          # same bar traces, per-point styling
+        self.assertIn("opacity: arr.map((q) => (isPre(q) ? PRELIM_OPACITY : 1))", js)
+
+    def test_hover_values_carry_units_and_outage_label_is_unambiguous(self):
+        js = Path('app/static/app.js').read_text(encoding='utf-8')
+        self.assertIn("hovertemplate: `%{y:,.0f} MW`", js)
+        self.assertIn("Nicht verfügbare Leistung ${ZONE_NAMES[z]}", js)
+        self.assertNotIn("`${ZONE_NAMES[z]} nicht verfügbar`", js)
 
 
 if __name__ == '__main__':
