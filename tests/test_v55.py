@@ -38,10 +38,9 @@ class OutageChartTests(unittest.TestCase):
 class PhoneChartTests(unittest.TestCase):
     def test_legend_never_covers_the_plot_on_narrow_charts(self):
         js = Path('app/static/app.js').read_text(encoding='utf-8')
-        # legend anchored to the figure top pushes the plot down; card grows by its height
-        self.assertIn("yref: 'container', y: 1, yanchor: 'top'", js)
-        self.assertIn('.then(() => fitLegend(el, narrow))', js)
-        self.assertIn("showlegend: !isNarrow($('chOut'))", js)
+        # v5.7: no Plotly legend at all - keys live in the HTML chart head and wrap like text
+        self.assertIn('showlegend: false,  // keys live in the HTML chart head', js)
+        self.assertNotIn('fitLegend', js)
         # tick spacing from the plot area width, re-render when crossing the breakpoint
         self.assertIn('plotW < 240 ? 6 : plotW < 490 ? 4 : 2', js)
         self.assertIn("window.addEventListener('resize'", js)

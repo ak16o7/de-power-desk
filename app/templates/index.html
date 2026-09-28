@@ -10,13 +10,13 @@
   <link rel="apple-touch-icon" href="/static/apple-touch-icon.png?v=1" />
   <meta name="theme-color" content="#111110" />
   <script>/* apply a stored theme before first paint (no flash) */try{var t=localStorage.getItem('dpd-theme');document.documentElement.dataset.theme=(t==='light'||t==='dark')?t:(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark');}catch(e){}</script>
-  <link rel="stylesheet" href="/static/style.css?v=5.6.0" />
+  <link rel="stylesheet" href="/static/style.css?v=5.7.0" />
   <script src="/static/plotly.min.js?v=3.3.1"></script>
 </head>
 <body data-refresh="__REFRESH_SECONDS__">
 <header class="top">
   <div class="wrap">
-    <div class="brand"><h1>DE Power Desk</h1><span>ENTSO-E · DE-LU · 15-min MTU · Zeiten Europe/Berlin</span></div>
+    <div class="brand"><h1>DE Power Desk</h1><span>Deutscher Strommarkt · Zeiten Berlin</span></div>
     <div class="status" id="status" aria-live="polite"><span class="dot" id="statusDot"></span><span id="statusText">lädt…</span><span class="detail" id="statusDetail"></span></div>
     <span class="chip warn hidden" id="authChip" title="DASHBOARD_USERNAME/PASSWORD in Render setzen"><span class="ico">!</span>Öffentlich ohne Login</span>
     <div class="controls">
@@ -77,46 +77,74 @@
   <section class="grid">
     <article class="panel" id="pRes">
       <div class="panel-head">
-        <div><h2>Erneuerbare: Ist vs. Prognosen</h2><p>Ist (A75) gegen DA-Prognose (A01, D-1 18:00), ID-Stand (A40, D 08:00) und laufende Prognose (A18). Balken: Ist − DA. Die jüngsten Ist-Werte sind Hochrechnungen und werden mit Messwerten nachgezogen – deshalb zusätzlich Ø 1 h.</p></div>
+        <div><h2>Erneuerbare: Ist vs. Prognosen</h2><p>Wind- und Solareinspeisung gegen die Prognosen. Die Balken zeigen, wie weit das Ist von der Day-Ahead-Prognose abweicht.</p></div>
         <div class="panel-tools"><div class="seg" id="resTech" role="group" aria-label="Technologie">
           <button aria-pressed="true" data-v="RES">Gesamt</button><button aria-pressed="false" data-v="Solar">Solar</button><button aria-pressed="false" data-v="Wind Onshore">Onshore</button><button aria-pressed="false" data-v="Wind Offshore">Offshore</button>
         </div></div>
       </div>
-      <div class="chart tall" id="chRes"></div>
+      <div class="chead"></div><div class="chart" id="chRes"></div>
+      <div class="chead"></div><div class="chart" id="chResDiff"></div>
       <div class="metrics" id="mRes"></div>
+      <details class="method">
+        <summary>Quellen &amp; Methodik</summary>
+        <ul>
+          <li><b>Ist:</b> tatsächliche Erzeugung je Viertelstunde (ENTSO-E A75). Die jüngsten Werte sind Hochrechnungen der Netzbetreiber und werden später durch Messwerte ersetzt; die Kachel oben zeigt deshalb auch den Stundenschnitt.</li>
+          <li><b>Day-Ahead:</b> Prognose vom Vortag, 18:00 (ENTSO-E A69, Prozess A01) – das, was die Day-Ahead-Auktion eingepreist hat.</li>
+          <li><b>Intraday 08:00:</b> Prognosestand am Liefertag um 08:00 (A69, A40).</li>
+          <li><b>Laufend:</b> jüngste Prognose (A69, A18). Aus ihr kommt die Revision für die nächsten vier Stunden.</li>
+        </ul>
+      </details>
     </article>
 
     <article class="panel" id="pLoad">
       <div class="panel-head">
-        <div><h2>Last &amp; Residuallast</h2><p>Residuallast = Last − Solar − Wind. Vergleich immer DA gegen DA (Last A65/A01, EE A69/A01). Balken: Ist − DA.</p></div>
+        <div><h2>Last &amp; Residuallast</h2><p>Stromverbrauch und Residuallast (Last minus Wind und Solar) gegen die Day-Ahead-Prognose.</p></div>
       </div>
-      <div class="chart tall" id="chLoad"></div>
+      <div class="chead"></div><div class="chart" id="chLoad"></div>
+      <div class="chead"></div><div class="chart" id="chLoadDiff"></div>
       <div class="metrics" id="mLoad"></div>
+      <details class="method">
+        <summary>Quellen &amp; Methodik</summary>
+        <ul>
+          <li><b>Last:</b> Ist und Day-Ahead-Prognose (ENTSO-E A65).</li>
+          <li><b>Residuallast</b> = Last − Solar − Wind. Das Ist entsteht aus den Ist-Werten, die Prognose aus den Day-Ahead-Prognosen (A65, A69). Verglichen wird immer Day-Ahead mit Day-Ahead.</li>
+          <li><b>Balken:</b> Residuallast Ist − Day-Ahead. Positiv heißt: Konventionelle Kraftwerke und Importe mussten mehr liefern als eingeplant.</li>
+        </ul>
+      </details>
     </article>
 
     <article class="panel wide" id="pFlow">
       <div class="panel-head">
-        <div><h2>Grenzflüsse DE-LU</h2><p>Physisch (A11) vs. DA-Fahrplan (A09/A01) vs. Gesamtfahrplan inkl. Intraday (A09/A05). Positiv = Import nach DE-LU. Intraday-XB = Gesamt − DA. Phys. − Fahrplan = alles, was Handelsfahrpläne per Definition nicht enthalten: Redispatch/Countertrading, Regelenergie-Austausch, Nothilfe, ungewollte Abweichungen. Pro Grenze vor allem Ring-/Transitflüsse (an Core-Grenzen ist der Fahrplan eine rechnerische Zerlegung der Nettopositionen). In der Summe heben sich Ringflüsse auf; der Rest schwankt um ±1 GW und mehr, ohne klaren Bezug zum NRV-Saldo – Kontext, kein Handelssignal.</p></div>
+        <div><h2>Grenzflüsse DE-LU</h2><p>Physikalische Flüsse gegen die Handelsfahrpläne, als Summe oder je Grenze. Positiv heißt Import nach DE-LU.</p></div>
         <div class="panel-tools"><select id="flowBorder" aria-label="Grenze"><option value="TOTAL">Summe alle Grenzen</option></select></div>
       </div>
-      <div class="chart" id="chFlow"></div>
+      <div class="chead"></div><div class="chart" id="chFlow"></div>
       <div class="tablewrap"><table id="tFlow"></table></div>
       <div class="sources" id="srcFlow"></div>
+      <details class="method">
+        <summary>Quellen &amp; Methodik</summary>
+        <ul>
+          <li><b>Physisch:</b> gemessene Flüsse an den Grenzkuppelstellen (ENTSO-E A11).</li>
+          <li><b>Day-Ahead-Fahrplan:</b> in der Day-Ahead-Auktion vereinbarte Austausche (A09, Vertragsart A01). <b>Gesamtfahrplan:</b> einschließlich Intraday-Handel (A09, A05). Intraday = Gesamt − Day-Ahead.</li>
+          <li><b>Phys. − Fahrplan:</b> alles, was Fahrpläne nicht enthalten – Redispatch und Countertrading, Regelenergie-Austausch, Nothilfe, ungewollte Abweichungen. Je Grenze sind das vor allem Ring- und Transitflüsse; an den Core-Grenzen ist der Fahrplan nur eine rechnerische Zerlegung der Nettopositionen. In der Summe heben sich Ringflüsse auf. Kontext, kein Handelssignal.</li>
+        </ul>
+        <p class="muted" id="srcFlowAll"></p>
+      </details>
     </article>
 
     <article class="panel wide" id="pOut">
       <div class="panel-head">
-        <div><h2>Kraftwerksverfügbarkeit (REMIT / ENTSO-E 15.1)</h2><p>A80-Blockmeldungen plus A77-Anlagenmeldungen ohne Blockmeldung (z. B. Windparks). Pro Einheit zählt die größte gleichzeitig gemeldete Einschränkung. Δ 24 h = Stand jetzt vs. gleicher Zeitpunkt gestern.</p></div>
+        <div><h2>Kraftwerksverfügbarkeit</h2><p>Nicht verfügbare Kraftwerksleistung laut Marktmeldungen (REMIT), Deutschland und Nachbarn.</p></div>
       </div>
       <div class="tablewrap"><table id="tZones"></table></div>
-      <div class="chart short" id="chOut"></div>
-      <h3 style="font-size:13px;margin:14px 0 0">Neu oder geändert in den letzten 24 h</h3>
+      <div class="chead"></div><div class="chart" id="chOut"></div>
+      <h3 class="subhead">Neu oder geändert in den letzten 24 h</h3>
       <div class="tablewrap scroll" id="recentWrap"><table id="tRecent"></table></div>
       <details class="method" id="allNotices">
         <summary>Alle Meldungen des Tages</summary>
         <div class="filters">
-          <select id="fZone" aria-label="Zone"><option value="">Alle Zonen</option><option>DE_LU</option><option>FR</option><option>NL</option><option>BE</option></select>
-          <select id="fType" aria-label="Art"><option value="">Geplant + ungeplant</option><option value="forced">Nur ungeplant (A54)</option><option value="planned">Nur geplant (A53)</option></select>
+          <select id="fZone" aria-label="Zone"><option value="">Alle Zonen</option><option value="DE_LU">DE-LU</option><option value="FR">FR</option><option value="NL">NL</option><option value="BE">BE</option></select>
+          <select id="fType" aria-label="Art"><option value="">Geplant + ungeplant</option><option value="forced">Nur ungeplant</option><option value="planned">Nur geplant</option></select>
           <select id="fState" aria-label="Status"><option value="">Alle Status</option><option value="active">Aktiv</option><option value="upcoming">Beginnt heute</option><option value="ended">Beendet</option></select>
           <input type="search" id="fText" placeholder="Anlage / Brennstoff suchen" />
           <span class="count" id="fCount"></span>
@@ -124,13 +152,24 @@
         <div class="tablewrap scroll"><table id="tNotices"></table></div>
       </details>
       <div class="sources" id="srcOut"></div>
+      <details class="method">
+        <summary>Quellen &amp; Methodik</summary>
+        <ul>
+          <li><b>Quelle:</b> ENTSO-E, Nichtverfügbarkeit von Erzeugungseinheiten (Transparenzverordnung, Art. 15.1): Blockmeldungen (A80) plus Anlagenmeldungen ohne eigene Blockmeldung (A77, etwa Windparks).</li>
+          <li><b>Zählweise:</b> Pro Einheit zählt die größte gleichzeitig gemeldete Einschränkung, damit überlappende Meldungen nicht doppelt zählen. Geplant oder ungeplant laut Meldung.</li>
+          <li><b>Δ 24 h:</b> Stand jetzt gegen denselben Zeitpunkt gestern.</li>
+        </ul>
+        <p class="muted" id="srcOutAll"></p>
+      </details>
     </article>
 
     <article class="panel wide" id="pSys">
       <div class="panel-head">
         <div><h2>Systembilanz, reBAP &amp; Regelenergie</h2><p>Deutschland gesamt, je Viertelstunde. Die jüngsten Balken sind vorläufig, bis der offizielle ENTSO-E-Wert vorliegt.</p></div>
       </div>
-      <div class="chart tall" id="chSys"></div>
+      <div class="chead"></div><div class="chart" id="chSys"></div>
+      <div class="chead"></div><div class="chart" id="chRebap"></div>
+      <div class="chead"></div><div class="chart" id="chReg"></div>
       <div class="metrics" id="mSys"></div>
       <div class="sources" id="srcSys"></div>
       <details class="method" id="methSys">
@@ -139,7 +178,8 @@
           <li><b>Systembilanz:</b> Summe der vier deutschen Regelzonen aus ENTSO-E (A86), als mittlere Leistung je Viertelstunde (MWh × 4). Plus = System lang (Überdeckung), minus = System kurz (Unterdeckung).</li>
           <li><b>Vorläufig:</b> Vollständig liegt die ENTSO-E-Summe im Median erst rund 30 Minuten nach Ende der Viertelstunde vor. Bis dahin kommen die fehlenden Regelzonen aus dem RZ-Saldo der Netzbetreiber auf netztransparenz.de (rund 15 Minuten), notfalls aus dem NRV-Saldo. Es ist dieselbe Größe; der offizielle Wert ersetzt den vorläufigen automatisch.</li>
           <li><b>reBAP:</b> ENTSO-E (A85). Am selben Tag eine Schätzung der Netzbetreiber, der abgerechnete Preis folgt Tage bis Wochen später.</li>
-          <li><b>Regelenergie:</b> aktivierte aFRR und mFRR, Hochregeln minus Tiefregeln, für ganz Deutschland von netztransparenz.de. Ohne Zugang dort aus ENTSO-E, wo Amprion fehlt. mFRR erscheint nur, wenn sie am Tag abgerufen wurde.</li>
+          <li><b>NRV-Saldo:</b> Saldo des deutschen Netzregelverbunds, also der gesamte Regelbedarf (positiv = Unterdeckung, es muss hochgeregelt werden). Er entspricht der Systembilanz mit umgekehrtem Vorzeichen.</li>
+          <li><b>aFRR / mFRR:</b> tatsächlich aktivierte Regelenergie, Hochregeln minus Tiefregeln, für ganz Deutschland von netztransparenz.de. Ohne Zugang dort aus ENTSO-E, wo Amprion fehlt.</li>
         </ul>
         <p class="muted" id="srcSysAll"></p>
       </details>
@@ -153,6 +193,6 @@
     <div class="copy">© <span id="year">2026</span> Kaan Akdere · DE Power Desk</div>
   </footer>
 </main>
-<script src="/static/app.js?v=5.6.0"></script>
+<script src="/static/app.js?v=5.7.0"></script>
 </body>
 </html>

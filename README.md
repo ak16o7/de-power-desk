@@ -1,4 +1,4 @@
-# DE Power Desk v5.6
+# DE Power Desk v5.7
 
 Ein Intraday-Dashboard für den deutschen Strommarkt auf Basis von ENTSO-E-Daten, optional ergänzt um netztransparenz.de. Es läuft mit FastAPI und lokal gebündeltem Plotly und wird auf Render mit Docker betrieben. Routen, Umgebungsvariablen und Deployment sind zu v4.4.1 kompatibel.
 
@@ -14,6 +14,13 @@ Ein Intraday-Dashboard für den deutschen Strommarkt auf Basis von ENTSO-E-Daten
 | **Systembilanz / reBAP** | Systembilanz in MW (+ lang, − kurz; A86, die jüngsten Viertelstunden vorläufig von netztransparenz), reBAP (A85), aFRR/mFRR | Ob das System gerade kurz oder lang ist |
 
 Die Markierung „bullish/bearish“ ist eine einfache Desk-Heuristik: EE-Abweichung ab ±300 MW, Residuallast ab ±500 MW, Kraftwerks-Δ ab ±300 MW. Sie ist keine Handelsempfehlung.
+
+## Neu in v5.7
+
+- **Ein Stil für alle Panels.** Jedes Diagramm hat einen eigenen Kopf mit Titel, Einheit und Farbschlüssel (echte Linienmuster als SVG). Die Schlüssel sind Schalter: ein Klick blendet die Reihe aus und wieder ein (z. B. FR im Kraftwerks-Diagramm). Keine Plotly-Legenden mehr, die auf dem Handy über den Daten liegen – die Köpfe umbrechen wie Text.
+- **Beschreibungen in einem Satz, ohne Codes.** A75, A09/A05, A80/A77 & Co. stehen je Panel eingeklappt unter „Quellen & Methodik“. Status-Chips nur bei Problemen, vollständiger Status in der Methodik. Deutsche Bezeichnungen (Brennstoffe, Datenstatus, Day-Ahead statt DA in Diagrammen).
+- **Teilgraphen als eigene Diagramme mit gemeinsamer Zeitachse.** Ziehen zoomt die Zeit (nur x), die Diagramme eines Panels zoomen gemeinsam, Doppelklick setzt zurück. Der Zoom bleibt bei Aktualisierungen erhalten.
+- **Regelenergie wieder mit NRV-Saldo:** NRV-Saldo (gesamter Regelbedarf, gepunktet), aFRR und mFRR in einem Diagramm, alle mit dem deutschen Vorzeichen + = hochregeln. mFRR wird immer gezeigt, auch wenn sie null ist.
 
 ## Neu in v5.6
 
@@ -110,7 +117,7 @@ python -m uvicorn app.main:app --port 8000
 
 ```bash
 pip install -r requirements-dev.txt
-python -m unittest discover -s tests -v                                  # offline, 153 Tests
+python -m unittest discover -s tests -v                                  # offline, 157 Tests
 python scripts/live_smoke.py --env-file .env --day 2026-09-22            # echter ENTSO-E-Abgleich
 python scripts/ntp_check.py --day 2026-09-22                             # netztransparenz.de-Zugang prüfen
 python scripts/smoke_http.py --base-url https://de-power-desk.onrender.com --day 2026-09-22 --user … --password …
