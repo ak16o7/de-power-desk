@@ -1,4 +1,4 @@
-# DE Power Desk v5.4.1
+# DE Power Desk v5.5
 
 Ein Intraday-Dashboard für den deutschen Strommarkt auf Basis von ENTSO-E-Daten, optional ergänzt um netztransparenz.de. Es läuft mit FastAPI und lokal gebündeltem Plotly und wird auf Render mit Docker betrieben. Routen, Umgebungsvariablen und Deployment sind zu v4.4.1 kompatibel.
 
@@ -14,6 +14,12 @@ Ein Intraday-Dashboard für den deutschen Strommarkt auf Basis von ENTSO-E-Daten
 | **Systembilanz / reBAP** | A86-Bilanz (negativ = System kurz), reBAP (A85), aFRR, NRV-Saldo | Ob das System gerade kurz oder lang ist |
 
 Die Markierung „bullish/bearish“ ist eine einfache Desk-Heuristik: EE-Abweichung ab ±300 MW, Residuallast ab ±500 MW, Kraftwerks-Δ ab ±300 MW. Sie ist keine Handelsempfehlung.
+
+## Neu in v5.5
+
+- **Kompakter Kopf:** „Aktualisieren“ ist jetzt ein ↻-Symbol (lädt die Seite neu; der Server holt die Daten ohnehin selbst im Hintergrund), „Auto“ heißt „Live“. Die Statuszeile zeigt nur „Stand hh:mm“ und ggf. die betroffenen Panels mit Klarnamen; Countdown und Details stehen im Tooltip. Auf dem Handy bleiben Datum, Heute, Live, ↻ und Design-Knopf in einer Zeile.
+- **Kraftwerksverfügbarkeit in einem Diagramm:** DE-LU, FR, NL und BE als vier Linien in fester Farbreihenfolge (wie die Tabelle darüber), Namen direkt am Linienende, Tooltip mit allen Zonen in MW. Der Zonen-Umschalter entfällt.
+- **Diagramme auf dem Handy:** Die Legende liegt über der Grafik statt auf den Daten, die Karte wächst um die Legendenhöhe. Zeitachse ohne gedrehte/abgeschnittene Beschriftung. Beim Drehen des Handys wird neu gezeichnet.
 
 ## Neu in v5.4.1
 
@@ -98,7 +104,7 @@ python -m uvicorn app.main:app --port 8000
 
 ```bash
 pip install -r requirements-dev.txt
-python -m unittest discover -s tests -v                                  # offline, 144 Tests
+python -m unittest discover -s tests -v                                  # offline, 148 Tests
 python scripts/live_smoke.py --env-file .env --day 2026-09-22            # echter ENTSO-E-Abgleich
 python scripts/ntp_check.py --day 2026-09-22                             # netztransparenz.de-Zugang prüfen
 python scripts/smoke_http.py --base-url https://de-power-desk.onrender.com --day 2026-09-22 --user … --password …
