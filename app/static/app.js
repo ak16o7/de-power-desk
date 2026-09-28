@@ -3,21 +3,107 @@
   'use strict';
   const $ = (id) => document.getElementById(id);
   const REFRESH_S = Math.max(60, parseInt(document.body.dataset.refresh, 10) || 300);
-  const NF0 = new Intl.NumberFormat('de-DE', { maximumFractionDigits: 0 });
-  const NF1 = new Intl.NumberFormat('de-DE', { maximumFractionDigits: 1, minimumFractionDigits: 1 });
-  const NF2 = new Intl.NumberFormat('de-DE', { maximumFractionDigits: 2, minimumFractionDigits: 2 });
+
+  // ---------- language ----------
+  // <html lang> is set in <head> before first paint (stored choice, else the
+  // browser language). Static text exists in both languages in the page
+  // (data-lang, CSS shows one); generated text comes from TXT via tr().
+  const LANG_KEY = 'dpd-lang';
+  const lang = () => (document.documentElement.lang === 'en' ? 'en' : 'de');
+  const LOCALE = () => (lang() === 'en' ? 'en-GB' : 'de-DE');
+  let NF0, NF2;
+  function setNumberFormats() {
+    NF0 = new Intl.NumberFormat(LOCALE(), { maximumFractionDigits: 0 });
+    NF2 = new Intl.NumberFormat(LOCALE(), { maximumFractionDigits: 2, minimumFractionDigits: 2 });
+  }
+  setNumberFormats();
+  const TXT = {
+    // status bar, header
+    loading: ['lädt…', 'loading…'], asOf: ['Stand {t}', 'As of {t}'], errorIn: ['Fehler: {p}', 'Error: {p}'],
+    incompleteIn: ['{p} unvollständig', '{p} incomplete'],
+    incompleteInfo: ['Mindestens eine Quelle ist unvollständig; Details stehen im jeweiligen Panel.', 'At least one source is incomplete; see the panel for details.'],
+    allComplete: ['Alle Quellen vollständig', 'All sources complete'], liveNext: ['Live: nächste Prüfung in {s} s', 'Live: next check in {s} s'],
+    nextUpdate: ['Nächstes Update in {s} s', 'Next update in {s} s'], liveOff: ['Live aus', 'Live off'],
+    themeLight: ['Helles Design', 'Light theme'], themeDark: ['Dunkles Design', 'Dark theme'], ntpActive: ['netztransparenz.de aktiv', 'netztransparenz.de active'],
+    noData: ['Keine Daten für diese Auswahl veröffentlicht.', 'No data published for this selection.'], toggleKey: ['ein-/ausblenden', 'show / hide'],
+    minAgo: ['· {n} min alt', '· {n} min ago'], minAgoTitle: ['Minuten seit Ende dieser Viertelstunde', 'Minutes since the end of this quarter-hour'],
+    // signal tiles
+    avg1h: ['Ø 1 h', '1 h avg'], avgDay: ['Ø Tag', 'day avg'],
+    avg1hTitle: ['Mittel der letzten 4 MTUs; die jüngste MTU ist noch eine Schätzung', 'Mean of the last 4 MTUs; the latest MTU is still an estimate'],
+    vsId: ['vs. Intraday 08:00', 'vs. intraday 08:00'], range: ['Spanne', 'range'], to: ['bis', 'to'], restOfDay: ['Rest des Tages Ø', 'rest of day avg'],
+    revNone: ['Nur für den laufenden Tag, sobald eine laufende Prognose (A18) vollständig ist.', 'Only for the current day, once a complete latest forecast (A18) is available.'],
+    latestMinusDa: ['laufende Prognose − DA', 'latest forecast − DA'], residualLoad: ['Residuallast', 'Residual load'], loadActMinusDa: ['Last Ist − DA', 'Load actual − DA'],
+    physMinusSched: ['Phys. − Fahrplan', 'Phys. − schedule'], daSched: ['DA-Fahrplan', 'DA schedule'], bordersN: ['{n}/{m} Grenzen', '{n}/{m} borders'],
+    ofWhichUnplanned: ['davon ungeplant', 'of which unplanned'], unplannedDelta: ['ungeplant Δ', 'unplanned Δ'],
+    newChanged: ['neu/geändert 24 h: {n} ({m} ungeplant)', 'new/updated 24 h: {n} ({m} unplanned)'], incompleteFlag: ['⚠ unvollständig', '⚠ incomplete'],
+    sysShort: ['System kurz', 'System short'], sysLong: ['System lang', 'System long'], balanced: ['ausgeglichen', 'balanced'],
+    rebapPrel: ['reBAP (vorl.)', 'reBAP (prel.)'], officialAt: ['offiziell {t}', 'official {t}'], official: ['offiziell', 'official'], prelim: ['vorläufig', 'preliminary'],
+    excl: ['ohne', 'excl.'], tagShort: ['kurz', 'short'], tagLong: ['lang', 'long'],
+    fromNrvTitle: ['Wert der Netzbetreiber (netztransparenz.de); der offizielle ENTSO-E-Wert folgt', 'TSO figure (netztransparenz.de); the official ENTSO-E value follows'],
+    fromA86Title: ['offizieller ENTSO-E-Wert (A86)', 'official ENTSO-E value (A86)'],
+    h1Nowcast: ['letzte Stunde inkl. vorläufiger Viertelstunden', 'last hour incl. preliminary quarter-hours'], h1A86: ['letzte Stunde aus A86', 'last hour from A86'],
+    // chart heads and keys
+    actual: ['Ist', 'Actual'], dayAhead: ['Day-Ahead', 'Day-ahead'], id0800: ['Intraday 08:00', 'Intraday 08:00'], latest: ['laufend', 'latest'],
+    techRES: ['Wind und Solar', 'Wind and solar'], resDevTitle: ['Abweichung Ist − Day-Ahead', 'Error: actual − day-ahead'],
+    aboveFc: ['über Prognose', 'above forecast'], belowFc: ['unter Prognose', 'below forecast'],
+    loadAct: ['Last Ist', 'Load actual'], loadDa: ['Last Day-Ahead', 'Load day-ahead'], residAct: ['Residuallast Ist', 'Residual load actual'],
+    residDa: ['Residuallast Day-Ahead', 'Residual load day-ahead'], loadTitle: ['Last und Residuallast', 'Load and residual load'],
+    residDevTitle: ['Residuallast Ist − Day-Ahead', 'Residual load: actual − day-ahead'], higherFc: ['höher als Prognose', 'above forecast'], lowerFc: ['niedriger als Prognose', 'below forecast'],
+    physical: ['Physisch', 'Physical'], daSchedule: ['Day-Ahead-Fahrplan', 'Day-ahead schedule'], totalSchedule: ['Gesamtfahrplan inkl. Intraday', 'Total schedule incl. intraday'],
+    netImportAll: ['Netto-Import, alle Grenzen', 'Net import, all borders'], border: ['Grenze {b}', 'Border {b}'], flowNote: ['MW · + Import, − Export', 'MW · + import, − export'],
+    outTitle: ['Nicht verfügbare Leistung', 'Unavailable capacity'],
+    sysTitle: ['Systembilanz', 'System balance'], sysNote: ['MW · + lang, − kurz', 'MW · + long, − short'],
+    priceDual: ['Ausgleichsenergiepreis', 'Imbalance price'], priceEst: [' · Schätzung der Netzbetreiber, Abrechnung folgt', ' · TSO estimate, settled price follows'],
+    priceLong: ['Preis lang', 'Price long'], priceShort: ['Preis kurz', 'Price short'],
+    regTitle: ['Regelenergie', 'Balancing energy'], regNote: ['MW · + = hochregeln (System kurz)', 'MW · + = upward regulation (system short)'], nrv: ['NRV-Saldo', 'NRV balance'],
+    // stat tiles
+    errNow: ['Abweichung jetzt', 'Error now'], actMinusDaAt: ['Ist − Day-Ahead · {t}', 'vs. day-ahead · {t}'], mae: ['Mittlere Abweichung', 'Mean abs. error'],
+    maeSub: ['Betrag, seit 00:00', 'absolute, since 00:00'], maxErr: ['Größte Abweichung', 'Largest error'], since0: ['seit 00:00', 'since 00:00'],
+    actThrough: ['Ist-Daten bis', 'Actuals through'], lastComplete: ['zuletzt vollständig', 'last complete'],
+    residNow: ['Residuallast jetzt', 'Residual load now'], loadFcErr: ['Lastprognosefehler', 'Load forecast error'], loadActMinusDaLong: ['Last Ist − Day-Ahead', 'load vs. day-ahead'],
+    meanErr: ['Abweichung Ø', 'Mean error'], residSince0: ['Residuallast seit 00:00', 'residual, since 00:00'], peakLoad: ['Lastspitze', 'Peak load'],
+    sysNow: ['Systembilanz jetzt', 'System balance now'], rebapNow: ['reBAP jetzt', 'reBAP now'], estimate: ['Schätzung', 'estimate'], final: ['final', 'final'],
+    rebapToday: ['reBAP heute', 'reBAP today'], avgMaxMin: ['Ø / Max / Min €/MWh', 'avg / max / min €/MWh'], regNow: ['Regelenergie jetzt', 'Balancing energy now'],
+    // tables
+    thBorder: ['Grenze', 'Border'], thTotal: ['Gesamt', 'Total'], thNote: ['Hinweis', 'Note'], total: ['Summe', 'Total'],
+    physSchedTitle: ['Pro Grenze: v. a. Ring-/Transitflüsse (Core: Fahrplan ist rechnerische Zerlegung). Summe: Ringflüsse heben sich auf; Rest = Redispatch/Countertrading, Regelenergie, Datenabweichungen – kein Handelssignal.',
+      'Per border: mostly loop/transit flows (Core: the schedule is an arithmetic split). Total: loop flows cancel out; the rest is redispatch/countertrading, balancing, data differences – not a trading signal.'],
+    flag0All: ['0 MW ganztägig – Ausfall/Wartung?', '0 MW all day – outage/maintenance?'], flag0Phys: ['0 MW physisch trotz Fahrplan', '0 MW physical despite schedule'],
+    covOf: ['{name}: {n} von {m} Grenzen', '{name}: {n} of {m} borders'], totalSched: ['Gesamtfahrplan', 'Total schedule'],
+    thUnavail: ['Nicht verfügbar', 'Unavailable'], thUnplanned: ['Ungeplant', 'Unplanned'], thPlanned: ['Geplant', 'Planned'], thUnplDelta: ['Ungeplant Δ 24 h', 'Unplanned Δ 24 h'],
+    thActive: ['Aktive Meldungen', 'Active notices'], thData: ['Daten', 'Data'], unitPlant: ['Block- und Anlagenmeldungen', 'unit and plant notices'], unitOnly: ['Blockmeldungen', 'unit notices'],
+    plantsWithout: [', davon {n} Anlagen ohne Blockmeldung', ', incl. {n} plants without a unit notice'], noDataFlag: ['keine Daten', 'no data'], complete: ['✓ vollständig', '✓ complete'],
+    thPublished: ['Veröffentlicht', 'Published'], thPlant: ['Anlage', 'Plant'], thFuel: ['Brennstoff', 'Fuel'], thType: ['Art', 'Type'], thPeriod: ['Zeitraum', 'Period'],
+    thNominal: ['Nenn-MW', 'Nominal MW'], thDuration: ['Dauer', 'Duration'], thReason: ['Grund', 'Reason'],
+    unplanned: ['ungeplant', 'unplanned'], planned: ['geplant', 'planned'], unknown: ['unbekannt', 'unknown'], open: ['offen', 'open'],
+    active: ['aktiv', 'active'], upcoming: ['kommt', 'upcoming'], ended: ['beendet', 'ended'],
+    noRecent: ['Keine neuen oder geänderten Meldungen in den letzten 24 h.', 'No new or updated notices in the last 24 h.'],
+    countNotices: ['{n} von {m} Meldungen · MW je Meldung, bei Überlappung nicht addierbar', '{n} of {m} notices · MW per notice, not additive where they overlap'],
+    lt30: ['< 30 Tage', '< 30 days'], ge30: ['≥ 30 Tage', '≥ 30 days'],
+  };
+  const tr = (key, vars) => {
+    const s = TXT[key] ? TXT[key][lang() === 'en' ? 1 : 0] : key;
+    return vars ? s.replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? '') : s;
+  };
   const BORDER_NAMES = { FR: 'FR', NL: 'NL', BE: 'BE', DK_1: 'DK1', DK_2: 'DK2', AT: 'AT', CH: 'CH', CZ: 'CZ', PL: 'PL', SE_4: 'SE4', NO_2: 'NO2' };
   const ZONE_NAMES = { DE_LU: 'DE-LU', FR: 'FR', NL: 'NL', BE: 'BE' };
   const OUT_ZONES = ['DE_LU', 'FR', 'NL', 'BE'];
-  // ENTSO-E production types (API names are English).
+  // ENTSO-E production types (API names are English; German shown in de).
   const FUEL_DE = { Biomass: 'Biomasse', Lignite: 'Braunkohle', 'Coal gas': 'Kokereigas', Gas: 'Erdgas', 'Hard coal': 'Steinkohle', Oil: 'Öl',
     'Oil shale': 'Ölschiefer', Peat: 'Torf', Geothermal: 'Geothermie', 'Pumped storage': 'Pumpspeicher', 'Run-of-river': 'Laufwasser',
     'Hydro reservoir': 'Speicherwasser', Marine: 'Meeresenergie', Nuclear: 'Kernenergie', 'Other RES': 'Sonstige erneuerbare', Solar: 'Solar',
     Waste: 'Abfall', 'Wind offshore': 'Wind offshore', 'Wind onshore': 'Wind onshore', Other: 'Sonstige', Battery: 'Batterie' };
-  const fuel = (f) => esc(FUEL_DE[f] || f || '');
-  const DOC_DE = { A80: 'Blockmeldungen', A77: 'Anlagenmeldungen' };
-  const STATE_DE = { ok: 'ok', partial: 'unvollständig', no_data: 'keine Daten', empty: 'keine Daten', error: 'Fehler', not_configured: 'nicht konfiguriert' };
-  const PANEL_NAMES = { renewables: 'EE', load: 'Last', borders: 'Grenzen', outages: 'Kraftwerke', balancing: 'Systembilanz' };
+  const fuel = (f) => esc((lang() === 'de' && FUEL_DE[f]) || f || '');
+  const DOCS = { de: { A80: 'Blockmeldungen', A77: 'Anlagenmeldungen' }, en: { A80: 'Unit notices', A77: 'Plant notices' } };
+  const STATES = {
+    de: { ok: 'ok', partial: 'unvollständig', no_data: 'keine Daten', empty: 'keine Daten', error: 'Fehler', not_configured: 'nicht konfiguriert' },
+    en: { ok: 'ok', partial: 'incomplete', no_data: 'no data', empty: 'no data', error: 'error', not_configured: 'not configured' },
+  };
+  const stateName = (v) => STATES[lang()][v] || v;
+  const PANEL_NAMES = {
+    de: { renewables: 'EE', load: 'Last', borders: 'Grenzen', outages: 'Kraftwerke', balancing: 'Systembilanz' },
+    en: { renewables: 'RES', load: 'Load', borders: 'Borders', outages: 'Plants', balancing: 'System balance' },
+  };
   const state = { data: {}, errors: {}, hidden: {}, zoom: {}, resTech: 'RES', timer: null, countdown: REFRESH_S, loading: false };
 
   // ---------- formatting ----------
@@ -29,19 +115,19 @@
   const hhmm = (iso) => {
     if (!iso) return '—';
     const d = new Date(iso);
-    return Number.isNaN(d.getTime()) ? '—' : d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Berlin' });
+    return Number.isNaN(d.getTime()) ? '—' : d.toLocaleTimeString(LOCALE(), { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: 'Europe/Berlin' });
   };
   const dayTime = (iso) => {
     if (!iso) return '—';
     const d = new Date(iso);
-    return d.toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Berlin' });
+    return d.toLocaleString(LOCALE(), { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: 'Europe/Berlin' });
   };
   const todayBerlin = () => new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Berlin' });
   // "MTU 17:30 · 40 min alt": age = now − end of that quarter-hour. The status
   // bar only says when the SERVER built the panel; this says how old the data is.
   const ageText = (end) => {
     const mins = Math.round((Date.now() - end) / 60e3);
-    return Number.isFinite(mins) && mins >= 0 ? `· ${mins} min alt` : '';
+    return Number.isFinite(mins) && mins >= 0 ? tr('minAgo', { n: mins }) : '';
   };
   const mtu = (iso) => {
     if (!iso) return 'MTU —';
@@ -49,7 +135,7 @@
     const end = Date.parse(iso) + 900e3;
     // data-end lets tick() keep the age current between panel reloads.
     return live && Number.isFinite(end)
-      ? `MTU ${hhmm(iso)} <span class="muted age" data-end="${end}" title="Minuten seit Ende dieser Viertelstunde">${ageText(end)}</span>`
+      ? `MTU ${hhmm(iso)} <span class="muted age" data-end="${end}" title="${tr('minAgoTitle')}">${ageText(end)}</span>`
       : `MTU ${hhmm(iso)}`;
   };
   const refreshAges = () => document.querySelectorAll('.age[data-end]').forEach((el) => { el.textContent = ageText(Number(el.dataset.end)); });
@@ -68,8 +154,8 @@
   const berlinParts = (d) => Object.fromEntries(BERLIN_PARTS.formatToParts(d).filter((p) => p.type !== 'literal').map((p) => [p.type, p.value]));
   const berlinLabel = (x) => {
     const d = new Date(`${x}Z`);
-    // MEZ/MESZ suffix keeps the repeated hour on the DST fall-back day unambiguous.
-    return d.toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Berlin', timeZoneName: 'short' });
+    // MEZ/MESZ (CET/CEST) suffix keeps the repeated hour on the DST fall-back day unambiguous.
+    return d.toLocaleString(LOCALE(), { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: 'Europe/Berlin', timeZoneName: 'short' });
   };
   // Every full `stepH` hours of the selected Berlin delivery day, as UTC x values.
   function timeTicks(day, stepH) {
@@ -147,7 +233,7 @@
       barcornerradius: 2,
       xaxis: { type: 'date', tickformat: '%H:%M', hoverformat: '%d.%m. %H:%M', gridcolor: grid, linecolor: grid, zeroline: false, color: muted },
       yaxis: { gridcolor: grid, zerolinecolor: cssVar('--line'), ticksuffix: '', color: muted, separatethousands: true, tickformat: ',.0f', fixedrange: true },
-      separators: ',.',
+      separators: lang() === 'en' ? '.,' : ',.',
     }, extra);
   }
   const line = (pts, name, color, dash = 'solid', yaxis = 'y', extra = {}) => Object.assign({
@@ -158,7 +244,7 @@
   // per-point opacity (no extra traces, so every bar keeps its width and
   // position); the chart adds a quiet "vorläufig" band behind them.
   const PRELIM_OPACITY = 0.55;
-  const bars = (pts, yaxis = 'y', unit = 'MW', names = ['über Prognose', 'unter Prognose'], prelim = null) => {
+  const bars = (pts, yaxis = 'y', unit = 'MW', names = [tr('aboveFc'), tr('belowFc')], prelim = null) => {
     const pos = cssVar('--pos'), neg = cssVar('--neg');
     // Exact zeros belong to neither side (e.g. A86 "balanced"); they would be invisible anyway.
     const p = (pts || []).map((q) => ({ t: q.t, v: q.v > 0 ? q.v : null }));
@@ -167,7 +253,7 @@
     const trace = (arr, color, label) => ({
       type: 'bar', x: xs(arr), y: ys(arr), name: label, yaxis,
       // Pre-formatted (de-DE, explicit sign): Plotly's '%{y:+,.0f}' is not applied in unified hover and printed raw values like '-58.431'.
-      customdata: arr.map((q) => `${sgn(q.v)} ${unit}${isPre(q) ? ' · vorläufig' : ''}`),
+      customdata: arr.map((q) => `${sgn(q.v)} ${unit}${isPre(q) ? ` · ${tr('prelim')}` : ''}`),
       hovertemplate: '%{customdata}',
       marker: prelim ? { color, opacity: arr.map((q) => (isPre(q) ? PRELIM_OPACITY : 1)) } : { color },
     });
@@ -180,7 +266,7 @@
     if (!traces.some((t) => t.x && t.x.length)) {
       if (window.Plotly) Plotly.purge(el);
       delete el.dataset.sync;
-      el.innerHTML = '<div class="empty">Keine Daten für diese Auswahl veröffentlicht.</div>';
+      el.innerHTML = `<div class="empty">${tr('noData')}</div>`;
       return;
     }
     if (el.querySelector('.empty')) el.innerHTML = '';
@@ -263,7 +349,7 @@
     const hidden = state.hidden[id] || new Set();
     const key = (k) => (k.toggle === false
       ? `<span class="key">${swatch(k)}${esc(k.name)}</span>`
-      : `<button type="button" class="key" data-chart="${id}" data-name="${esc(k.name)}" aria-pressed="${!hidden.has(k.name)}" title="ein-/ausblenden">${swatch(k)}${esc(k.name)}</button>`);
+      : `<button type="button" class="key" data-chart="${id}" data-name="${esc(k.name)}" aria-pressed="${!hidden.has(k.name)}" title="${tr('toggleKey')}">${swatch(k)}${esc(k.name)}</button>`);
     h.innerHTML = `<div class="ct"><b>${esc(title)}</b>${note ? `<span>${note}</span>` : ''}</div>`
       + (keys.length ? `<div class="ck">${keys.map(key).join('')}</div>` : '');
   }
@@ -277,16 +363,16 @@
     const tech = k.tech_error_mw || {};
     setSig('sigRes', {
       value: mw(k.res_error_mw),
-      sub: `Solar <b>${sgn(tech.Solar)}</b> · On <b>${sgn(tech['Wind Onshore'])}</b> · Off <b>${sgn(tech['Wind Offshore'])}</b><br>vs. Intraday 08:00: <b>${sgn(k.res_error_id_mw)}</b> MW`,
-      foot: `<span>${mtu(k.as_of)}</span><span title="Mittel der letzten 4 MTUs; die jüngste MTU ist noch eine Schätzung">Ø 1 h ${sgn(k.res_error_1h_mw)} MW</span><span>Ø Tag ${sgn(k.day_avg_error_mw)} MW</span>${deltas(k.changes)}`,
+      sub: `Solar <b>${sgn(tech.Solar)}</b> · On <b>${sgn(tech['Wind Onshore'])}</b> · Off <b>${sgn(tech['Wind Offshore'])}</b><br>${tr('vsId')}: <b>${sgn(k.res_error_id_mw)}</b> MW`,
+      foot: `<span>${mtu(k.as_of)}</span><span title="${tr('avg1hTitle')}">${tr('avg1h')} ${sgn(k.res_error_1h_mw)} MW</span><span>${tr('avgDay')} ${sgn(k.day_avg_error_mw)} MW</span>${deltas(k.changes)}`,
       tag: dir(k.res_error_mw, 300, 'bear'),
     });
     const hasFwd = isNum(k.next4h_revision_avg_mw);
     setSig('sigRev', {
       value: hasFwd ? mw(k.next4h_revision_avg_mw) : '—',
-      sub: hasFwd ? `Spanne <b>${sgn(k.next4h_revision_min_mw)}</b> bis <b>${sgn(k.next4h_revision_max_mw)}</b> MW<br>Rest des Tages Ø <b>${sgn(k.rest_of_day_revision_avg_mw)}</b> MW`
-        : 'Nur für den laufenden Tag, sobald eine laufende Prognose (A18) vollständig ist.',
-      foot: hasFwd ? `<span>${hhmm(k.next4h_window_start)}–${hhmm(k.next4h_window_end)}</span><span>laufende Prognose − DA</span>` : '<span>laufende Prognose − DA</span>',
+      sub: hasFwd ? `${tr('range')} <b>${sgn(k.next4h_revision_min_mw)}</b> ${tr('to')} <b>${sgn(k.next4h_revision_max_mw)}</b> MW<br>${tr('restOfDay')} <b>${sgn(k.rest_of_day_revision_avg_mw)}</b> MW`
+        : tr('revNone'),
+      foot: hasFwd ? `<span>${hhmm(k.next4h_window_start)}–${hhmm(k.next4h_window_end)}</span><span>${tr('latestMinusDa')}</span>` : `<span>${tr('latestMinusDa')}</span>`,
       tag: dir(k.next4h_revision_avg_mw, 300, 'bear'),
     });
 
@@ -295,23 +381,23 @@
     const pts = (suffix) => s[`${T} ${suffix}`] || [];
     const err = T === 'RES' ? s['RES Forecast Error'] : diff(pts('Actual'), pts('Day-ahead'));
     const C = ['--s1', '--s2', '--s3', '--s4'].map(cssVar);
-    const series = [['Ist', 'Actual', 'solid'], ['Day-Ahead', 'Day-ahead', 'dash'], ['Intraday 08:00', 'Intraday', 'dot'], ['laufend', 'Current', 'dashdot']];
+    const series = [[tr('actual'), 'Actual', 'solid'], [tr('dayAhead'), 'Day-ahead', 'dash'], [tr('id0800'), 'Intraday', 'dot'], [tr('latest'), 'Current', 'dashdot']];
     const main = series.map(([name, key, dash], i) => line(pts(key), name, C[i], dash));
     const dev = bars(err);
     const range = xRange(main, dev);
-    const techName = { RES: 'Wind und Solar', Solar: 'Solar', 'Wind Onshore': 'Wind onshore', 'Wind Offshore': 'Wind offshore' }[T] || T;
+    const techName = { RES: tr('techRES'), Solar: 'Solar', 'Wind Onshore': 'Wind onshore', 'Wind Offshore': 'Wind offshore' }[T] || T;
     head('chRes', techName, 'MW', series.map(([name, , dash], i) => lk(name, C[i], dash)));
     plot('chRes', main, baseLayout(), { xLabels: false, range });
-    head('chResDiff', 'Abweichung Ist − Day-Ahead', 'MW', [bk('über Prognose', cssVar('--pos')), bk('unter Prognose', cssVar('--neg'))]);
+    head('chResDiff', tr('resDevTitle'), 'MW', [bk(tr('aboveFc'), cssVar('--pos')), bk(tr('belowFc'), cssVar('--neg'))]);
     plot('chResDiff', dev, baseLayout({ bargap: 0.15 }), { range });
     const errVals = (err || []).map((p) => p.v);
     const mae = errVals.length ? errVals.reduce((a, v) => a + Math.abs(v), 0) / errVals.length : null;
     const maxAbs = errVals.length ? errVals.reduce((a, v) => (Math.abs(v) > Math.abs(a) ? v : a), 0) : null;
     $('mRes').innerHTML = [
-      metric('Abweichung jetzt', `${sgn(T === 'RES' ? k.res_error_mw : tech[T])} MW`, `Ist − Day-Ahead · ${hhmm(k.as_of)}`),
-      metric('Mittlere Abweichung', `${fmt(mae)} MW`, 'Betrag, seit 00:00'),
-      metric('Größte Abweichung', `${sgn(maxAbs)} MW`, 'seit 00:00'),
-      metric('Ist-Daten bis', hhmm(d.freshness?.actual_through), 'zuletzt vollständig'),
+      metric(tr('errNow'), `${sgn(T === 'RES' ? k.res_error_mw : tech[T])} MW`, tr('actMinusDaAt', { t: hhmm(k.as_of) })),
+      metric(tr('mae'), `${fmt(mae)} MW`, tr('maeSub')),
+      metric(tr('maxErr'), `${sgn(maxAbs)} MW`, tr('since0')),
+      metric(tr('actThrough'), hhmm(d.freshness?.actual_through), tr('lastComplete')),
     ].join('');
   }
 
@@ -321,27 +407,27 @@
     const k = d.kpi || {}, s = d.series || {};
     setSig('sigResid', {
       value: mw(k.residual_surprise_mw),
-      sub: `Residuallast <b>${fmt(k.residual_load_mw)}</b> MW<br>Last Ist − DA <b>${sgn(k.load_error_mw)}</b> MW`,
-      foot: `<span>${mtu(k.surprise_as_of)}</span><span>Ø 1 h ${sgn(k.residual_surprise_1h_mw)} MW</span><span>Ø Tag ${sgn(k.day_avg_surprise_mw)} MW</span>`,
+      sub: `${tr('residualLoad')} <b>${fmt(k.residual_load_mw)}</b> MW<br>${tr('loadActMinusDa')} <b>${sgn(k.load_error_mw)}</b> MW`,
+      foot: `<span>${mtu(k.surprise_as_of)}</span><span>${tr('avg1h')} ${sgn(k.residual_surprise_1h_mw)} MW</span><span>${tr('avgDay')} ${sgn(k.day_avg_surprise_mw)} MW</span>`,
       tag: dir(k.residual_surprise_mw, 500, 'bull'),
     });
     // Colour = quantity (Last / Residuallast), dash = Ist / Day-Ahead.
     const cL = cssVar('--s1'), cR = cssVar('--s3');
-    const keys = [lk('Last Ist', cL), lk('Last Day-Ahead', cL, 'dash'), lk('Residuallast Ist', cR), lk('Residuallast Day-Ahead', cR, 'dash')];
+    const keys = [lk(tr('loadAct'), cL), lk(tr('loadDa'), cL, 'dash'), lk(tr('residAct'), cR), lk(tr('residDa'), cR, 'dash')];
     const main = [s['Load Actual'], s['Load Forecast'], s['Residual Load Actual'], s['Residual Load Forecast']]
       .map((pts, i) => line(pts, keys[i].name, keys[i].color, keys[i].dash));
-    const dev = bars(s['Residual Load Surprise'], 'y', 'MW', ['höher als Prognose', 'niedriger als Prognose']);
+    const dev = bars(s['Residual Load Surprise'], 'y', 'MW', [tr('higherFc'), tr('lowerFc')]);
     const range = xRange(main, dev);
-    head('chLoad', 'Last und Residuallast', 'MW', keys);
+    head('chLoad', tr('loadTitle'), 'MW', keys);
     plot('chLoad', main, baseLayout(), { xLabels: false, range });
-    head('chLoadDiff', 'Residuallast Ist − Day-Ahead', 'MW', [bk('höher als Prognose', cssVar('--pos')), bk('niedriger als Prognose', cssVar('--neg'))]);
+    head('chLoadDiff', tr('residDevTitle'), 'MW', [bk(tr('higherFc'), cssVar('--pos')), bk(tr('lowerFc'), cssVar('--neg'))]);
     plot('chLoadDiff', dev, baseLayout({ bargap: 0.15 }), { range });
     const la = ys(s['Load Actual']);
     $('mLoad').innerHTML = [
-      metric('Residuallast jetzt', `${fmt(k.residual_load_mw)} MW`, hhmm(k.as_of)),
-      metric('Lastprognosefehler', `${sgn(k.load_error_mw)} MW`, 'Last Ist − Day-Ahead'),
-      metric('Abweichung Ø', `${sgn(k.day_avg_surprise_mw)} MW`, 'Residuallast seit 00:00'),
-      metric('Lastspitze', `${fmt(la.length ? Math.max(...la) : null)} MW`, 'seit 00:00'),
+      metric(tr('residNow'), `${fmt(k.residual_load_mw)} MW`, hhmm(k.as_of)),
+      metric(tr('loadFcErr'), `${sgn(k.load_error_mw)} MW`, tr('loadActMinusDaLong')),
+      metric(tr('meanErr'), `${sgn(k.day_avg_surprise_mw)} MW`, tr('residSince0')),
+      metric(tr('peakLoad'), `${fmt(la.length ? Math.max(...la) : null)} MW`, tr('since0')),
     ].join('');
   }
 
@@ -352,8 +438,8 @@
     const flags = d.flags || [];
     setSig('sigFlow', {
       value: mw(k.net_import_mw),
-      sub: `Intraday <b>${sgn(k.intraday_xb_mw)}</b> · Phys. − Fahrplan <b>${sgn(k.unscheduled_mw)}</b><br>DA-Fahrplan <b>${sgn(k.da_schedule_mw)}</b> MW`,
-      foot: `<span>${mtu(k.as_of)}</span><span>${cov.physical_series ?? 0}/${cov.expected ?? 0} Grenzen</span>${flags.length ? `<span class="flag">⚠ ${flags.map((f) => BORDER_NAMES[f.border] || f.border).join(', ')} 0 MW</span>` : ''}`,
+      sub: `Intraday <b>${sgn(k.intraday_xb_mw)}</b> · ${tr('physMinusSched')} <b>${sgn(k.unscheduled_mw)}</b><br>${tr('daSched')} <b>${sgn(k.da_schedule_mw)}</b> MW`,
+      foot: `<span>${mtu(k.as_of)}</span><span>${tr('bordersN', { n: cov.physical_series ?? 0, m: cov.expected ?? 0 })}</span>${flags.length ? `<span class="flag">⚠ ${flags.map((f) => BORDER_NAMES[f.border] || f.border).join(', ')} 0 MW</span>` : ''}`,
       tag: null,
     });
     const sel = $('flowBorder');
@@ -364,19 +450,19 @@
     const src = b === 'TOTAL'
       ? { p: s['Net Physical Import'], da: s['Net DA Schedule'], tot: s['Net Total Schedule'] }
       : { p: d.borders?.[b]?.physical, da: d.borders?.[b]?.scheduled, tot: d.borders?.[b]?.total };
-    const keys = [lk('Physisch', cssVar('--s1')), lk('Day-Ahead-Fahrplan', cssVar('--s2'), 'dash'), lk('Gesamtfahrplan inkl. Intraday', cssVar('--s3'), 'dot')];
-    head('chFlow', b === 'TOTAL' ? 'Netto-Import, alle Grenzen' : `Grenze ${BORDER_NAMES[b] || b}`, 'MW · + Import, − Export', keys);
+    const keys = [lk(tr('physical'), cssVar('--s1')), lk(tr('daSchedule'), cssVar('--s2'), 'dash'), lk(tr('totalSchedule'), cssVar('--s3'), 'dot')];
+    head('chFlow', b === 'TOTAL' ? tr('netImportAll') : tr('border', { b: BORDER_NAMES[b] || b }), tr('flowNote'), keys);
     plot('chFlow', [src.p, src.da, src.tot].map((pts, i) => line(pts, keys[i].name, keys[i].color, keys[i].dash)), baseLayout());
 
     const rows = (d.table || []).slice().sort((a, c) => Math.abs(c.physical ?? 0) - Math.abs(a.physical ?? 0));
-    const flagText = { zero_flow_all_day: '0 MW ganztägig – Ausfall/Wartung?', zero_physical_with_schedule: '0 MW physisch trotz Fahrplan' };
-    $('tFlow').innerHTML = `<thead><tr><th>Grenze</th><th class="num">Physisch</th><th class="num">Day-Ahead</th><th class="num">Gesamt</th><th class="num">Intraday</th><th class="num" title="Pro Grenze: v. a. Ring-/Transitflüsse (Core: Fahrplan ist rechnerische Zerlegung). Summe: Ringflüsse heben sich auf; Rest = Redispatch/Countertrading, Regelenergie, Datenabweichungen – kein Handelssignal.">Phys. − Fahrplan</th><th>Hinweis</th></tr></thead><tbody>` +
+    const flagText = { zero_flow_all_day: tr('flag0All'), zero_physical_with_schedule: tr('flag0Phys') };
+    $('tFlow').innerHTML = `<thead><tr><th>${tr('thBorder')}</th><th class="num">${tr('physical')}</th><th class="num">${tr('dayAhead')}</th><th class="num">${tr('thTotal')}</th><th class="num">Intraday</th><th class="num" title="${tr('physSchedTitle')}">${tr('physMinusSched')}</th><th>${tr('thNote')}</th></tr></thead><tbody>` +
       rows.map((r) => `<tr><td>${esc(BORDER_NAMES[r.border] || r.border)}</td><td class="num">${sgn(r.physical)}</td><td class="num">${sgn(r.scheduled)}</td><td class="num">${sgn(r.total)}</td><td class="num">${sgn(r.intraday)}</td><td class="num">${sgn(r.unscheduled)}</td><td>${r.flag ? `<span class="flag">⚠ ${esc(flagText[r.flag] || r.flag)}</span>` : ''}</td></tr>`).join('') +
-      `<tr><td><b>Summe</b></td><td class="num"><b>${sgn(k.net_import_mw)}</b></td><td class="num"><b>${sgn(k.da_schedule_mw)}</b></td><td class="num"><b>${sgn(k.total_schedule_mw)}</b></td><td class="num"><b>${sgn(k.intraday_xb_mw)}</b></td><td class="num"><b>${sgn(k.unscheduled_mw)}</b></td><td class="muted">MTU ${hhmm(k.as_of)}</td></tr></tbody>`;
+      `<tr><td><b>${tr('total')}</b></td><td class="num"><b>${sgn(k.net_import_mw)}</b></td><td class="num"><b>${sgn(k.da_schedule_mw)}</b></td><td class="num"><b>${sgn(k.total_schedule_mw)}</b></td><td class="num"><b>${sgn(k.intraday_xb_mw)}</b></td><td class="num"><b>${sgn(k.unscheduled_mw)}</b></td><td class="muted">MTU ${hhmm(k.as_of)}</td></tr></tbody>`;
     // Chips only for gaps; the full coverage sits under "Quellen & Methodik".
-    const covItems = [['Physisch', cov.physical_series, cov.physical_total_complete], ['Day-Ahead-Fahrplan', cov.scheduled_series, cov.scheduled_total_complete],
-      ['Gesamtfahrplan', cov.total_series, cov.total_schedule_complete]];
-    const covText = ([name, n]) => `${name}: ${n ?? 0} von ${cov.expected ?? 0} Grenzen`;
+    const covItems = [[tr('physical'), cov.physical_series, cov.physical_total_complete], [tr('daSchedule'), cov.scheduled_series, cov.scheduled_total_complete],
+      [tr('totalSched'), cov.total_series, cov.total_schedule_complete]];
+    const covText = ([name, n]) => tr('covOf', { name, n: n ?? 0, m: cov.expected ?? 0 });
     $('srcFlow').innerHTML = covItems.filter(([, , ok]) => !ok).map((c) => chip(covText(c), 'warn')).join('');
     $('srcFlowAll').textContent = covItems.map((c) => `${c[2] ? '✓' : '!'} ${covText(c)}`).join(' · ');
   }
@@ -388,18 +474,18 @@
     const de = zones.DE_LU || {};
     setSig('sigOut', {
       value: mw(de.unavailable_mw, false),
-      sub: `davon ungeplant <b>${fmt(de.forced_mw)}</b> MW<br>Δ 24 h <b>${sgn(de.delta_24h_mw)}</b> · ungeplant Δ <b>${sgn(de.forced_delta_24h_mw)}</b>`,
-      foot: `<span>Stand ${hhmm(k.as_of)}</span><span>neu/geändert 24 h: ${k.recent_notices ?? 0} (${k.recent_forced_notices ?? 0} ungeplant)</span>${de.complete === false ? '<span class="flag">⚠ unvollständig</span>' : ''}`,
+      sub: `${tr('ofWhichUnplanned')} <b>${fmt(de.forced_mw)}</b> MW<br>Δ 24 h <b>${sgn(de.delta_24h_mw)}</b> · ${tr('unplannedDelta')} <b>${sgn(de.forced_delta_24h_mw)}</b>`,
+      foot: `<span>${tr('asOf', { t: hhmm(k.as_of) })}</span><span>${tr('newChanged', { n: k.recent_notices ?? 0, m: k.recent_forced_notices ?? 0 })}</span>${de.complete === false ? `<span class="flag">${tr('incompleteFlag')}</span>` : ''}`,
       tag: dir(de.delta_24h_mw, 300, 'bull'),
     });
     const zoneOrder = ['DE_LU', 'FR', 'NL', 'BE'];
-    $('tZones').innerHTML = `<thead><tr><th>Zone</th><th class="num">Nicht verfügbar</th><th class="num">Ungeplant</th><th class="num">Geplant</th><th class="num">Δ 24 h</th><th class="num">Ungeplant Δ 24 h</th><th class="num">Aktive Meldungen</th><th>Daten</th></tr></thead><tbody>` +
+    $('tZones').innerHTML = `<thead><tr><th>Zone</th><th class="num">${tr('thUnavail')}</th><th class="num">${tr('thUnplanned')}</th><th class="num">${tr('thPlanned')}</th><th class="num">Δ 24 h</th><th class="num">${tr('thUnplDelta')}</th><th class="num">${tr('thActive')}</th><th>${tr('thData')}</th></tr></thead><tbody>` +
       zoneOrder.map((z) => {
         const r = zones[z] || {};
-        const what = r.source ? (String(r.source).includes('A77') ? 'Block- und Anlagenmeldungen' : 'Blockmeldungen')
-          + (r.a77_plant_only_units ? `, davon ${r.a77_plant_only_units} Anlagen ohne Blockmeldung` : '') : '';
-        const src = !r.source ? '<span class="flag">keine Daten</span>'
-          : r.complete === false ? `<span class="flag" title="${esc(what)}">⚠ unvollständig</span>` : `<span class="muted" title="${esc(what)}">✓ vollständig</span>`;
+        const what = r.source ? (String(r.source).includes('A77') ? tr('unitPlant') : tr('unitOnly'))
+          + (r.a77_plant_only_units ? tr('plantsWithout', { n: r.a77_plant_only_units }) : '') : '';
+        const src = !r.source ? `<span class="flag">${tr('noDataFlag')}</span>`
+          : r.complete === false ? `<span class="flag" title="${esc(what)}">${tr('incompleteFlag')}</span>` : `<span class="muted" title="${esc(what)}">${tr('complete')}</span>`;
         return `<tr><td><b>${ZONE_NAMES[z]}</b></td><td class="num">${fmt(r.unavailable_mw)}</td><td class="num">${fmt(r.forced_mw)}</td><td class="num">${fmt(r.planned_mw)}</td><td class="num">${sgn(r.delta_24h_mw)}</td><td class="num">${sgn(r.forced_delta_24h_mw)}</td><td class="num">${fmt(r.active_events)}</td><td>${src}</td></tr>`;
       }).join('') + '</tbody>';
 
@@ -419,41 +505,45 @@
       x: utcX(e.p.t), y: e.y, xref: 'x', yref: 'y', xanchor: 'left', xshift: 6, showarrow: false,
       text: `<span style="color:${zoneColors[e.zn]}">■</span> ${ZONE_NAMES[e.zn]}`, font: { size: 11, color: cssVar('--text-2') },
     }));
-    head('chOut', 'Nicht verfügbare Leistung', 'MW', OUT_ZONES.map((zn) => lk(ZONE_NAMES[zn], zoneColors[zn])));
+    head('chOut', tr('outTitle'), 'MW', OUT_ZONES.map((zn) => lk(ZONE_NAMES[zn], zoneColors[zn])));
     plot('chOut', outTraces, baseLayout({
       margin: { l: 56, r: 64, t: 12, b: 30 }, annotations: labels,
       yaxis: Object.assign(baseLayout().yaxis, { rangemode: 'tozero' }),
     }));
 
-    const typeLabel = (n) => (n.notice_type === 'forced' ? '<span class="flag">ungeplant</span>' : n.notice_type === 'planned' ? 'geplant' : 'unbekannt');
-    const window_ = (n) => `${dayTime(n.event_start)} – ${n.duration_class === 'open_ended' ? 'offen' : dayTime(n.event_end)}`;
+    const typeLabel = (n) => (n.notice_type === 'forced' ? `<span class="flag">${tr('unplanned')}</span>` : n.notice_type === 'planned' ? tr('planned') : tr('unknown'));
+    const window_ = (n) => `${dayTime(n.event_start)} – ${n.duration_class === 'open_ended' ? tr('open') : dayTime(n.event_end)}`;
     const recent = d.recent || [];
     $('tRecent').innerHTML = recent.length
-      ? `<thead><tr><th>Veröffentlicht</th><th>Zone</th><th>Anlage</th><th>Brennstoff</th><th class="num">MW</th><th>Art</th><th>Zeitraum</th><th>Status</th></tr></thead><tbody>` +
-        recent.map((n) => `<tr><td>${dayTime(n.published)}${n.revision > 1 ? ` <span class="muted">Rev. ${n.revision}</span>` : ''}</td><td>${ZONE_NAMES[n.zone] || esc(n.zone)}</td><td>${esc(n.plant)}</td><td>${fuel(n.fuel)}</td><td class="num">${fmt(n.unavailable_mw)}</td><td>${typeLabel(n)}</td><td>${window_(n)}</td><td>${n.state === 'active' ? 'aktiv' : n.state === 'upcoming' ? 'kommt' : 'beendet'}</td></tr>`).join('') + '</tbody>'
-      : '<tbody><tr><td class="muted">Keine neuen oder geänderten Meldungen in den letzten 24 h.</td></tr></tbody>';
+      ? `<thead><tr><th>${tr('thPublished')}</th><th>Zone</th><th>${tr('thPlant')}</th><th>${tr('thFuel')}</th><th class="num">MW</th><th>${tr('thType')}</th><th>${tr('thPeriod')}</th><th>Status</th></tr></thead><tbody>` +
+        recent.map((n) => `<tr><td>${dayTime(n.published)}${n.revision > 1 ? ` <span class="muted">Rev. ${n.revision}</span>` : ''}</td><td>${ZONE_NAMES[n.zone] || esc(n.zone)}</td><td>${esc(n.plant)}</td><td>${fuel(n.fuel)}</td><td class="num">${fmt(n.unavailable_mw)}</td><td>${typeLabel(n)}</td><td>${window_(n)}</td><td>${noticeState(n)}</td></tr>`).join('') + '</tbody>'
+      : `<tbody><tr><td class="muted">${tr('noRecent')}</td></tr></tbody>`;
     renderNotices();
     // Chips only for problems; the full status sits under "Quellen & Methodik".
     const st = Object.entries(d.source_status || {}).flatMap(([zone, docs]) => Object.entries(docs).map(([doc, v]) => ({ zone, doc, v })));
-    const stText = (e) => `${ZONE_NAMES[e.zone] || e.zone} ${DOC_DE[e.doc] || e.doc}: ${STATE_DE[e.v] || e.v}`;
+    const stText = (e) => `${ZONE_NAMES[e.zone] || e.zone} ${DOCS[lang()][e.doc] || e.doc}: ${stateName(e.v)}`;
     $('srcOut').innerHTML = st.filter((e) => stateCls(e.v) !== 'ok').map((e) => chip(stText(e), stateCls(e.v))).join('');
     $('srcOutAll').textContent = st.map((e) => `${stateCls(e.v) === 'ok' ? '✓' : '!'} ${stText(e)}`).join(' · ');
   }
 
+  const noticeState = (n) => (n.state === 'active' ? tr('active') : n.state === 'upcoming' ? tr('upcoming') : tr('ended'));
   function renderNotices() {
     const d = state.data.outages;
     if (!d) return;
     const fz = $('fZone').value, ft = $('fType').value, fs = $('fState').value, q = $('fText').value.trim().toLowerCase();
     const rows = (d.notices || []).filter((n) => (!fz || n.zone === fz) && (!ft || n.notice_type === ft) && (!fs || n.state === fs)
       && (!q || `${n.plant} ${n.fuel} ${FUEL_DE[n.fuel] || ''} ${n.reason_text || ''}`.toLowerCase().includes(q)));
-    $('fCount').textContent = `${rows.length} von ${(d.notices || []).length} Meldungen · MW je Meldung, bei Überlappung nicht addierbar`;
-    const durLabel = { bounded: '< 30 Tage', long_term: '≥ 30 Tage', open_ended: 'offen', unknown: '?' };
-    $('tNotices').innerHTML = `<thead><tr><th>Status</th><th>Zone</th><th>Anlage</th><th>Brennstoff</th><th class="num">MW</th><th class="num">Nenn-MW</th><th>Art</th><th>Dauer</th><th>Zeitraum</th><th>Veröffentlicht</th><th>Grund</th></tr></thead><tbody>` +
-      rows.slice(0, 500).map((n) => `<tr><td>${n.state === 'active' ? 'aktiv' : n.state === 'upcoming' ? 'kommt' : 'beendet'}</td><td>${ZONE_NAMES[n.zone] || esc(n.zone)}</td><td>${esc(n.plant)}</td><td>${fuel(n.fuel)}</td><td class="num">${fmt(n.unavailable_mw)}</td><td class="num">${fmt(n.nominal_mw)}</td><td>${n.notice_type === 'forced' ? '<span class="flag">ungeplant</span>' : n.notice_type === 'planned' ? 'geplant' : '?'}</td><td>${durLabel[n.duration_class] || ''}</td><td>${dayTime(n.event_start)} – ${n.duration_class === 'open_ended' ? 'offen' : dayTime(n.event_end)}</td><td>${dayTime(n.published)}</td><td class="wrapcell">${esc(n.reason_text || '')}</td></tr>`).join('') + '</tbody>';
+    $('fCount').textContent = tr('countNotices', { n: rows.length, m: (d.notices || []).length });
+    const durLabel = { bounded: tr('lt30'), long_term: tr('ge30'), open_ended: tr('open'), unknown: '?' };
+    $('tNotices').innerHTML = `<thead><tr><th>Status</th><th>Zone</th><th>${tr('thPlant')}</th><th>${tr('thFuel')}</th><th class="num">MW</th><th class="num">${tr('thNominal')}</th><th>${tr('thType')}</th><th>${tr('thDuration')}</th><th>${tr('thPeriod')}</th><th>${tr('thPublished')}</th><th>${tr('thReason')}</th></tr></thead><tbody>` +
+      rows.slice(0, 500).map((n) => `<tr><td>${noticeState(n)}</td><td>${ZONE_NAMES[n.zone] || esc(n.zone)}</td><td>${esc(n.plant)}</td><td>${fuel(n.fuel)}</td><td class="num">${fmt(n.unavailable_mw)}</td><td class="num">${fmt(n.nominal_mw)}</td><td>${n.notice_type === 'forced' ? `<span class="flag">${tr('unplanned')}</span>` : n.notice_type === 'planned' ? tr('planned') : '?'}</td><td>${durLabel[n.duration_class] || ''}</td><td>${dayTime(n.event_start)} – ${n.duration_class === 'open_ended' ? tr('open') : dayTime(n.event_end)}</td><td>${dayTime(n.published)}</td><td class="wrapcell">${esc(n.reason_text || '')}</td></tr>`).join('') + '</tbody>';
   }
 
-  // German names for the balancing sources (API labels are English).
-  const SYS_SOURCES = { A86: 'Bilanz (ENTSO-E A86)', A85: 'reBAP (ENTSO-E A85)', NTP: 'netztransparenz.de', '12.3.E': 'Regelenergie (ENTSO-E A24)' };
+  // Display names for the balancing sources (API labels are technical).
+  const SYS_SOURCES = {
+    de: { A86: 'Bilanz (ENTSO-E A86)', A85: 'reBAP (ENTSO-E A85)', NTP: 'netztransparenz.de', '12.3.E': 'Regelenergie (ENTSO-E A24)' },
+    en: { A86: 'Balance (ENTSO-E A86)', A85: 'reBAP (ENTSO-E A85)', NTP: 'netztransparenz.de', '12.3.E': 'Balancing energy (ENTSO-E A24)' },
+  };
   function renderSys() {
     const d = state.data.balancing;
     if (!d) return;
@@ -462,7 +552,7 @@
     // netztransparenz is usually 15–30 min ahead of the A86 German sum.
     const nowState = k.system_now_state || k.imbalance_state;
     const short = nowState === 'deficit', long = nowState === 'surplus';
-    const stateText = short ? 'System kurz' : long ? 'System lang' : nowState === 'balanced' ? 'ausgeglichen' : '—';
+    const stateText = short ? tr('sysShort') : long ? tr('sysLong') : nowState === 'balanced' ? tr('balanced') : '—';
     const fromNrv = (k.system_now_source || '').startsWith('NRV');
     const single = k.price_mode === 'single' || !(s['Imbalance price long'] || []).length;
     const price = k.price_mode === 'single' ? k.imbalance_price_eur_mwh : k.imbalance_price_short_eur_mwh;
@@ -472,13 +562,13 @@
     const afrrNow = isNum(k.afrr_de_mw) ? k.afrr_de_mw : k.afrr_partial_mw;
     const mfrrNow = isNum(k.mfrr_de_mw) ? k.mfrr_de_mw : k.mfrr_partial_mw;
     const missing = (k.afrr_missing_areas || []).join(', ');
-    const act = isNum(afrrNow) ? `aFRR <b>${sgn(afrrNow)}</b> MW${isNum(k.afrr_de_mw) ? '' : ` <span class="muted">(ohne ${esc(missing)})</span>`}` : 'aFRR —';
+    const act = isNum(afrrNow) ? `aFRR <b>${sgn(afrrNow)}</b> MW${isNum(k.afrr_de_mw) ? '' : ` <span class="muted">(${tr('excl')} ${esc(missing)})</span>`}` : 'aFRR —';
     const officialMw = isNum(k.imbalance_volume_mwh) ? k.imbalance_volume_mwh * 4 : null;
     setSig('sigSys', {
       value: isNum(k.system_now_mw) ? `${sgn(k.system_now_mw)}<small>MW</small>` : '—',
-      sub: `${stateText} · reBAP${prelim ? ' (vorl.)' : ''} <b>${fmt(price, NF2)}</b> €/MWh<br>offiziell ${hhmm(k.as_of)}: <b>${sgn(officialMw)}</b> MW · ${act}`,
-      foot: `<span>${mtu(k.system_now_as_of || k.as_of)}</span><span title="${fromNrv ? 'Wert der Netzbetreiber (netztransparenz.de); der offizielle ENTSO-E-Wert folgt' : 'offizieller ENTSO-E-Wert (A86)'}">${fromNrv ? 'vorläufig' : 'offiziell'}</span><span title="${k.imbalance_nowcast_points ? 'letzte Stunde inkl. vorläufiger Viertelstunden' : 'letzte Stunde aus A86'}">Ø 1 h ${sgn(k.imbalance_1h_avg_mw)} MW${k.imbalance_nowcast_points ? '*' : ''}</span>${deltas(k.system_now_changes || k.changes)}`,
-      tag: short ? { cls: 'bull', text: 'kurz' } : long ? { cls: 'bear', text: 'lang' } : null,
+      sub: `${stateText} · ${prelim ? tr('rebapPrel') : 'reBAP'} <b>${fmt(price, NF2)}</b> €/MWh<br>${tr('officialAt', { t: hhmm(k.as_of) })}: <b>${sgn(officialMw)}</b> MW · ${act}`,
+      foot: `<span>${mtu(k.system_now_as_of || k.as_of)}</span><span title="${fromNrv ? tr('fromNrvTitle') : tr('fromA86Title')}">${fromNrv ? tr('prelim') : tr('official')}</span><span title="${k.imbalance_nowcast_points ? tr('h1Nowcast') : tr('h1A86')}">${tr('avg1h')} ${sgn(k.imbalance_1h_avg_mw)} MW${k.imbalance_nowcast_points ? '*' : ''}</span>${deltas(k.system_now_changes || k.changes)}`,
+      tag: short ? { cls: 'bull', text: tr('tagShort') } : long ? { cls: 'bear', text: tr('tagLong') } : null,
     });
 
     // One quantity, one sign, one unit: system balance in MW (A86 MWh per
@@ -487,17 +577,17 @@
     const toMw = (pts) => (pts || []).map((q) => ({ t: q.t, v: isNum(q.v) ? q.v * 4 : q.v }));
     const nowcast = toMw(s['Net imbalance volume nowcast']);
     const prelimSet = new Set(nowcast.map((q) => q.t));
-    const bal = bars([...toMw(s['Net imbalance volume']), ...nowcast], 'y', 'MW', ['lang', 'kurz'], prelimSet);
+    const bal = bars([...toMw(s['Net imbalance volume']), ...nowcast], 'y', 'MW', [tr('tagLong'), tr('tagShort')], prelimSet);
     const euro = { hovertemplate: '%{y:,.2f} €/MWh' };
     const cP = cssVar('--s2'), cA = cssVar('--s3'), cM = cssVar('--s4'), cN = cssVar('--text-2');
-    const priceKeys = single ? [] : [lk('Preis lang', cP), lk('Preis kurz', cM, 'dash')];
+    const priceKeys = single ? [] : [lk(tr('priceLong'), cP), lk(tr('priceShort'), cM, 'dash')];
     const priceTr = single ? [line(s['Imbalance price'], 'reBAP', cP, 'solid', 'y', euro)]
       : priceKeys.map((k, i) => line(s[i ? 'Imbalance price short' : 'Imbalance price long'], k.name, k.color, k.dash, 'y', euro));
     // Regelenergie: need (NRV-Saldo) and what was activated (aFRR, mFRR);
     // all three share the German sign: + = Unterdeckung, hochregeln.
-    const without = deSeries ? '' : ` (ohne ${missing || '—'})`;
+    const without = deSeries ? '' : ` (${tr('excl')} ${missing || '—'})`;
     const mfrrPts = (s['mFRR net DE'] || []).length ? s['mFRR net DE'] : s['mFRR net partial'];
-    const regKeys = [lk('NRV-Saldo', cN, 'dot'), lk(`aFRR${without}`, cA), lk(`mFRR${without}`, cM)];
+    const regKeys = [lk(tr('nrv'), cN, 'dot'), lk(`aFRR${without}`, cA), lk(`mFRR${without}`, cM)];
     const reg = [s['NRV-Saldo'], deSeries ? s['aFRR net DE'] : s['aFRR net partial'], mfrrPts]
       .map((pts, i) => line(pts, regKeys[i].name, regKeys[i].color, regKeys[i].dash));
     const range = xRange(bal, priceTr, reg);
@@ -509,28 +599,28 @@
       shapes.push({ type: 'rect', layer: 'below', xref: 'x', yref: 'paper', x0: utcX(x0), x1: utcX(x1), y0: 0, y1: 1,
         fillcolor: cssVar('--line-soft'), opacity: 0.8, line: { width: 0 } });
     }
-    head('chSys', 'Systembilanz', 'MW · + lang, − kurz', [bk('lang', cssVar('--pos')), bk('kurz', cssVar('--neg')),
-      ...(nowcast.length ? [bk('vorläufig', cssVar('--muted'), 0.35)] : [])]);
+    head('chSys', tr('sysTitle'), tr('sysNote'), [bk(tr('tagLong'), cssVar('--pos')), bk(tr('tagShort'), cssVar('--neg')),
+      ...(nowcast.length ? [bk(tr('prelim'), cssVar('--muted'), 0.35)] : [])]);
     plot('chSys', bal, baseLayout({ shapes, bargap: 0.15 }), { xLabels: false, range });
-    head('chRebap', single ? 'reBAP' : 'Ausgleichsenergiepreis', `€/MWh${prelim ? ' · Schätzung der Netzbetreiber, Abrechnung folgt' : ''}`, priceKeys);
+    head('chRebap', single ? 'reBAP' : tr('priceDual'), `€/MWh${prelim ? tr('priceEst') : ''}`, priceKeys);
     plot('chRebap', priceTr, baseLayout(), { xLabels: false, range });
-    head('chReg', 'Regelenergie', 'MW · + = hochregeln (System kurz)', regKeys.filter((k, i) => (reg[i].x || []).length));
+    head('chReg', tr('regTitle'), tr('regNote'), regKeys.filter((k, i) => (reg[i].x || []).length));
     plot('chReg', reg, baseLayout(), { range });
 
-    const stateShort = short ? 'kurz' : long ? 'lang' : nowState === 'balanced' ? 'ausgeglichen' : '—';
+    const stateShort = short ? tr('tagShort') : long ? tr('tagLong') : nowState === 'balanced' ? tr('balanced') : '—';
     $('mSys').innerHTML = [
-      metric('Systembilanz jetzt', isNum(k.system_now_mw) ? `${sgn(k.system_now_mw)} MW` : '—',
-        `${stateShort} · ${hhmm(k.system_now_as_of || k.as_of)} · ${fromNrv ? 'vorläufig' : 'offiziell'}`),
-      metric('reBAP jetzt', `${fmt(price, NF2)} €/MWh`, `${hhmm(k.price_as_of)} · ${prelim ? 'Schätzung' : 'final'}`),
-      metric('reBAP heute', `${fmt(k.day_avg_price_eur_mwh)} / ${fmt(k.day_max_price_eur_mwh)} / ${fmt(k.day_min_price_eur_mwh)}`, 'Ø / Max / Min €/MWh'),
-      metric('Regelenergie jetzt', isNum(afrrNow) ? `aFRR ${sgn(afrrNow)} MW` : '—',
-        `mFRR ${sgn(mfrrNow)} MW${isNum(k.afrr_de_mw) ? '' : ` · ohne ${esc(missing)}`}`),
+      metric(tr('sysNow'), isNum(k.system_now_mw) ? `${sgn(k.system_now_mw)} MW` : '—',
+        `${stateShort} · ${hhmm(k.system_now_as_of || k.as_of)} · ${fromNrv ? tr('prelim') : tr('official')}`),
+      metric(tr('rebapNow'), `${fmt(price, NF2)} €/MWh`, `${hhmm(k.price_as_of)} · ${prelim ? tr('estimate') : tr('final')}`),
+      metric(tr('rebapToday'), `${fmt(k.day_avg_price_eur_mwh)} / ${fmt(k.day_max_price_eur_mwh)} / ${fmt(k.day_min_price_eur_mwh)}`, tr('avgMaxMin')),
+      metric(tr('regNow'), isNum(afrrNow) ? `aFRR ${sgn(afrrNow)} MW` : '—',
+        `mFRR ${sgn(mfrrNow)} MW${isNum(k.afrr_de_mw) ? '' : ` · ${tr('excl')} ${esc(missing)}`}`),
     ].join('');
     // Only problems are shown; the full status sits under "Quellen & Methodik".
     // With netztransparenz active, ENTSO-E A24 is just the fallback.
     const ntpOk = src.NTP?.state === 'ok';
     const relevant = Object.entries(src).filter(([key]) => !(ntpOk && key === '12.3.E'));
-    const label = (key, v) => `${SYS_SOURCES[key] || v.label}: ${v.state === 'ok' ? 'ok' : v.state === 'not_configured' ? 'nicht konfiguriert' : v.state === 'partial' ? 'unvollständig' : v.state}`;
+    const label = (key, v) => `${SYS_SOURCES[lang()][key] || v.label}: ${stateName(v.state)}`;
     $('srcSys').innerHTML = relevant.filter(([, v]) => stateCls(v.state) !== 'ok').map(([key, v]) => chip(label(key, v), stateCls(v.state), v.scope || '')).join('');
     $('srcSysAll').textContent = relevant.map(([key, v]) => `${stateCls(v.state) === 'ok' ? '✓' : '!'} ${label(key, v)}`).join(' · ');
   }
@@ -572,17 +662,17 @@
     const partial = PANELS.filter((n) => state.data[n]?.quality?.state === 'partial');
     // Last time the server rebuilt any panel; per-tile "min alt" shows data age.
     const built = PANELS.map((n) => Date.parse(state.data[n]?.updated)).filter(Number.isFinite);
-    const stamp = built.length ? `Stand ${new Date(Math.max(...built)).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Berlin' })}` : 'Stand —';
-    const names = (list) => list.map((n) => PANEL_NAMES[n] || n).join(', ');
-    if (failed.length) setStatus('bad', stamp, `Fehler: ${names(failed)}`, `${names(failed)}: ${state.errors[failed[0]]}`);
-    else if (partial.length) setStatus('warn', stamp, `${names(partial)} unvollständig`, 'Mindestens eine Quelle ist unvollständig; Details stehen im jeweiligen Panel.');
-    else setStatus('ok', stamp, '', 'Alle Quellen vollständig');
+    const stamp = tr('asOf', { t: built.length ? hhmm(new Date(Math.max(...built)).toISOString()) : '—' });
+    const names = (list) => list.map((n) => PANEL_NAMES[lang()][n] || n).join(', ');
+    if (failed.length) setStatus('bad', stamp, tr('errorIn', { p: names(failed) }), `${names(failed)}: ${state.errors[failed[0]]}`);
+    else if (partial.length) setStatus('warn', stamp, tr('incompleteIn', { p: names(partial) }), tr('incompleteInfo'));
+    else setStatus('ok', stamp, '', tr('allComplete'));
   }
 
   async function loadAll() {
     if (state.loading) return;
     state.loading = true;
-    setStatus('warn', 'lädt…', '');
+    setStatus('warn', tr('loading'), '');
     $('refresh').classList.add('spinning');
     await loadPanels();
     state.loading = false;
@@ -617,7 +707,7 @@
     $('statusText').textContent = text;
     $('statusDetail').textContent = detail ? `· ${detail}` : '';
     const live = isLive() && $('auto').checked && !state.loading;
-    const next = live ? (state.background ? `Live: nächste Prüfung in ${Math.max(0, state.countdown)} s` : `Nächstes Update in ${Math.max(0, state.countdown)} s`) : 'Live aus';
+    const next = live ? tr(state.background ? 'liveNext' : 'nextUpdate', { s: Math.max(0, state.countdown) }) : tr('liveOff');
     $('status').title = [info, next].filter(Boolean).join(' · ');
     state.lastStatus = [cls, text, detail, info];
   }
@@ -652,22 +742,51 @@
   function applyTheme(theme) {
     document.documentElement.dataset.theme = theme;
     const btn = $('theme');
-    const label = theme === 'dark' ? 'Helles Design' : 'Dunkles Design';
+    const label = theme === 'dark' ? tr('themeLight') : tr('themeDark');
     btn.title = label; btn.setAttribute('aria-label', label);
     document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'dark' ? '#111110' : '#f3f2ee');
     Object.values(RENDER).forEach((f) => f());  // Plotly reads colors at render time
   }
 
+  // Attributes and <option> texts cannot be switched by CSS: the German
+  // original is kept in data-de-*, the English one comes from data-en-*.
+  const ATTRS = [['enTitle', 'title'], ['enAria', 'aria-label'], ['enPh', 'placeholder']];
+  function applyLang(l) {
+    document.documentElement.lang = l;
+    setNumberFormats();
+    ATTRS.forEach(([key, attr]) => document.querySelectorAll(`[data-${key.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}]`).forEach((el) => {
+      const deKey = key.replace(/^en/, 'de');
+      if (el.dataset[deKey] === undefined) el.dataset[deKey] = el.getAttribute(attr) || '';
+      el.setAttribute(attr, l === 'en' ? el.dataset[key] : el.dataset[deKey]);
+    }));
+    document.querySelectorAll('option[data-en]').forEach((o) => {
+      if (o.dataset.de === undefined) o.dataset.de = o.textContent;
+      o.textContent = l === 'en' ? o.dataset.en : o.dataset.de;
+    });
+    state.hidden = {};  // series names change with the language
+    $('version').textContent = state.health ? `· v${state.health.version}${state.health.netztransparenz ? ` · ${tr('ntpActive')}` : ''}` : '';
+    $('year').textContent = new Date().toLocaleDateString(LOCALE(), { year: 'numeric', timeZone: 'Europe/Berlin' });
+    applyTheme(document.documentElement.dataset.theme || systemTheme());  // re-labels and re-renders everything
+    if (state.loading) setStatus('warn', tr('loading'), '');
+    else if (PANELS.some((n) => state.data[n] || state.errors[n])) updateStatus();
+  }
+
   async function init() {
-    applyTheme(storedTheme() || systemTheme());
+    applyLang(lang());
+    document.querySelectorAll('.js-lang').forEach((b) => b.addEventListener('click', () => {
+      const next = lang() === 'de' ? 'en' : 'de';
+      try { localStorage.setItem(LANG_KEY, next); } catch (_) { /* private mode: still switch for this view */ }
+      applyLang(next);
+    }));
     $('theme').addEventListener('click', () => {
       const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
       try { localStorage.setItem(THEME_KEY, next); } catch (_) { /* private mode: still switch for this view */ }
       applyTheme(next);
     });
-    $('year').textContent = new Date().toLocaleDateString('de-DE', { year: 'numeric', timeZone: 'Europe/Berlin' });
     $('day').value = todayBerlin();
     $('day').max = new Date(Date.now() + 2 * 864e5).toLocaleDateString('sv-SE', { timeZone: 'Europe/Berlin' });
+    // Tap anywhere on the date opens the picker (small phones hide its icon).
+    $('day').addEventListener('click', () => { try { $('day').showPicker(); } catch (_) { /* older browsers: native behaviour */ } });
     $('day').addEventListener('change', () => { $('flowBorder').length = 1; state.zoom = {}; loadAll(); });
     $('today').addEventListener('click', () => { $('day').value = todayBerlin(); state.zoom = {}; loadAll(); });
     $('refresh').addEventListener('click', loadAll);
@@ -697,7 +816,8 @@
     try {
       const h = await getJSON('/health', 30000);
       $('authChip').classList.toggle('hidden', !!h.auth_enabled || !!h.public_ok);
-      $('version').textContent = `· v${h.version}${h.netztransparenz ? ' · netztransparenz.de aktiv' : ''}`;
+      state.health = h;
+      $('version').textContent = `· v${h.version}${h.netztransparenz ? ` · ${tr('ntpActive')}` : ''}`;
       state.background = !!h.background_refresh;
     } catch (_) { /* panels report their own errors */ }
     setInterval(tick, 5000);

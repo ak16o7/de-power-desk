@@ -1,4 +1,4 @@
-# DE Power Desk v5.7.1
+# DE Power Desk v5.8
 
 Ein Intraday-Dashboard für den deutschen Strommarkt auf Basis von ENTSO-E-Daten, optional ergänzt um netztransparenz.de. Es läuft mit FastAPI und lokal gebündeltem Plotly und wird auf Render mit Docker betrieben. Routen, Umgebungsvariablen und Deployment sind zu v4.4.1 kompatibel.
 
@@ -14,6 +14,12 @@ Ein Intraday-Dashboard für den deutschen Strommarkt auf Basis von ENTSO-E-Daten
 | **Systembilanz / reBAP** | Systembilanz in MW (+ lang, − kurz; A86, die jüngsten Viertelstunden vorläufig von netztransparenz), reBAP (A85), aFRR/mFRR | Ob das System gerade kurz oder lang ist |
 
 Die Markierung „bullish/bearish“ ist eine einfache Desk-Heuristik: EE-Abweichung ab ±300 MW, Residuallast ab ±500 MW, Kraftwerks-Δ ab ±300 MW. Sie ist keine Handelsempfehlung.
+
+## Neu in v5.8
+
+- **Deutsch / Englisch.** Umschalter „EN“/„DE“ im Kopf: am Desktop rechts neben dem Design-Knopf, auf dem Handy in der Titelzeile (die Bedienzeile behält Platz für das Datum). Ohne gespeicherte Wahl entscheidet die Browsersprache (Deutsch → de, sonst en). Die Wahl wird im Browser gespeichert und vor dem ersten Zeichnen gesetzt – kein Aufblitzen der anderen Sprache.
+- **Wie:** Statischer Text steht in beiden Sprachen in der Seite (`data-lang`, CSS zeigt eine), Attribute und Auswahllisten über `data-en-*`, erzeugter Text aus einem Wörterbuch (`TXT`, je Schlüssel Deutsch und Englisch). Zahlen, Datum und Uhrzeit folgen der Sprache (1.000,5 / 1,000.5; MESZ / CEST), auch in den Diagrammen.
+- **Kleine Handys:** Datum bleibt bis 320 px Breite vollständig lesbar; ein Tipp aufs Datum öffnet den Kalender.
 
 ## Neu in v5.7.1
 
@@ -122,7 +128,7 @@ python -m uvicorn app.main:app --port 8000
 
 ```bash
 pip install -r requirements-dev.txt
-python -m unittest discover -s tests -v                                  # offline, 162 Tests
+python -m unittest discover -s tests -v                                  # offline, 166 Tests
 python scripts/live_smoke.py --env-file .env --day 2026-09-22            # echter ENTSO-E-Abgleich
 python scripts/ntp_check.py --day 2026-09-22                             # netztransparenz.de-Zugang prüfen
 python scripts/smoke_http.py --base-url https://de-power-desk.onrender.com --day 2026-09-22 --user … --password …

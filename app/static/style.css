@@ -34,6 +34,9 @@ body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 Inter,ui-san
 button,input,select{font:inherit;color:inherit}
 :focus-visible{outline:2px solid var(--focus);outline-offset:2px}
 .hidden{display:none!important}
+/* Language: both texts are in the page, the <html lang> set before first
+   paint shows one of them (no flash, no layout jump on switching). */
+html:not([lang="en"]) [data-lang="en"],html[lang="en"] [data-lang="de"]{display:none!important}
 .wrap{max-width:1680px;margin:0 auto;padding:0 24px}
 
 /* Top bar */
@@ -52,6 +55,11 @@ button,input,select{font:inherit;color:inherit}
 .btn.icon svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 .theme-dark-only,.theme-light-only{display:none}
 :root[data-theme="dark"] .theme-dark-only,:root[data-theme="light"] .theme-light-only{display:inline}
+/* Language toggle shows the language it switches TO. Desktop: last button of
+   the controls (next to the theme). Phones: in the title row, so the control
+   row keeps room for the date. */
+.btn.lang{font-size:12px;font-weight:700;letter-spacing:.03em}
+.mobile-only{display:none!important}
 .toggle{display:flex;align-items:center;gap:6px;color:var(--text-2);font-size:13px;padding:0 4px}
 .status{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px;white-space:nowrap;min-width:0}
 .status .detail{overflow:hidden;text-overflow:ellipsis}
@@ -165,6 +173,23 @@ footer .copy{margin-top:6px;color:var(--text-2)}
   .status .detail{display:none}
   .controls{width:100%}
   .controls input[type=date]{flex:1;min-width:0}
+  .desktop-only{display:none!important}
+  .mobile-only{display:inline-flex!important}
   .filters input[type=search]{min-width:0;flex:1}
 }
 @media (max-width:420px){.signals{grid-template-columns:1fr}}
+/* Small phones (360-400 px): the whole date must stay readable in one row with
+   Today / Live / reload / theme. The picker opens on tap (showPicker). */
+@media (max-width:400px){
+  .top .wrap{gap:8px}
+  .controls{gap:6px}
+  .controls input[type=date]{padding:7px 6px;font-size:13px}
+  .controls input[type=date]::-webkit-calendar-picker-indicator{display:none}
+  .toggle{padding:0;gap:4px}
+  #today{padding:7px 8px}
+}
+@media (max-width:340px){
+  .controls{gap:4px}
+  .controls input[type=date]{padding:7px 4px;font-size:12px}
+  .controls .btn.icon{width:32px}
+}
