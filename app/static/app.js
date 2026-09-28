@@ -145,11 +145,10 @@
     type: 'scatter', mode: 'lines', x: xs(pts), y: ys(pts), name, yaxis,
     line: { color, width: 2, dash, shape: 'hv' }, hovertemplate: `%{y:,.0f} MW`,
   }, extra);
-  // prelim: Set of timestamps whose bars are preliminary. They keep the exact
-  // bar geometry and colour but are drawn as a pale fill with a full-colour
-  // outline (same traces, per-point styling) - no extra traces, so the
-  // regular bars keep their width and position.
-  const PRELIM_OPACITY = 0.35;
+  // prelim: Set of timestamps whose bars are preliminary. Same traces with
+  // per-point opacity (no extra traces, so every bar keeps its width and
+  // position); the chart adds a quiet "vorläufig" band behind them.
+  const PRELIM_OPACITY = 0.55;
   const bars = (pts, name, yaxis = 'y2', unit = 'MW', names = ['über Prognose', 'unter Prognose'], prelim = null) => {
     const pos = cssVar('--pos'), neg = cssVar('--neg');
     // Exact zeros belong to neither side (e.g. A86 "balanced"); they would be invisible anyway.
@@ -161,9 +160,7 @@
       // Pre-formatted (de-DE, explicit sign): Plotly's '%{y:+,.0f}' is not applied in unified hover and printed raw values like '-58.431'.
       customdata: arr.map((q) => `${sgn(q.v)} ${unit}${isPre(q) ? ' · vorläufig' : ''}`),
       hovertemplate: '%{customdata}',
-      marker: prelim
-        ? { color, opacity: arr.map((q) => (isPre(q) ? PRELIM_OPACITY : 1)), line: { color, width: arr.map((q) => (isPre(q) ? 1.5 : 0)) } }
-        : { color },
+      marker: prelim ? { color, opacity: arr.map((q) => (isPre(q) ? PRELIM_OPACITY : 1)) } : { color },
     });
     return [trace(p, pos, names[0]), trace(n, neg, names[1])];
   };
@@ -186,7 +183,7 @@
     // The unified-hover title would show the UTC x value; the Berlin time row
     // from withBerlinTime replaces it.
     layout.xaxis = Object.assign({}, layout.xaxis, ticks, { unifiedhovertitle: { text: ' ' } });
-    if (narrow) {
+    if (narrow && layout.showlegend !== false) {
       // Phones: the horizontal legend wraps into several rows. Anchored to the
       // figure top it pushes the plot area down instead of covering the data;
       // fitLegend then grows the card so the plot keeps its height.
@@ -392,71 +389,99 @@
       rows.slice(0, 500).map((n) => `<tr><td>${n.state === 'active' ? 'aktiv' : n.state === 'upcoming' ? 'kommt' : 'beendet'}</td><td>${ZONE_NAMES[n.zone] || esc(n.zone)}</td><td>${esc(n.plant)}</td><td>${esc(n.fuel || '')}</td><td class="num">${fmt(n.unavailable_mw)}</td><td class="num">${fmt(n.nominal_mw)}</td><td>${n.notice_type === 'forced' ? '<span class="flag">ungeplant</span>' : n.notice_type === 'planned' ? 'geplant' : '?'}</td><td>${durLabel[n.duration_class] || ''}</td><td>${dayTime(n.event_start)} – ${n.duration_class === 'open_ended' ? 'offen' : dayTime(n.event_end)}</td><td>${dayTime(n.published)}</td><td class="wrapcell">${esc(n.reason_text || '')}</td></tr>`).join('') + '</tbody>';
   }
 
+  // German names for the balancing sources (API labels are English).
+  const SYS_SOURCES = { A86: 'Bilanz (ENTSO-E A86)', A85: 'reBAP (ENTSO-E A85)', NTP: 'netztransparenz.de', '12.3.E': 'Regelenergie (ENTSO-E A24)' };
   function renderSys() {
     const d = state.data.balancing;
     if (!d) return;
     const k = d.kpi || {}, s = d.series || {}, src = d.sources || {};
-    // Headline = freshest of A86 (x4) and −NRV-Saldo (same quantity, r ≈ −0.999);
+    // Headline = freshest of A86 (x4) and −NRV-Saldo (same quantity);
     // netztransparenz is usually 15–30 min ahead of the A86 German sum.
     const nowState = k.system_now_state || k.imbalance_state;
     const short = nowState === 'deficit', long = nowState === 'surplus';
+    const stateText = short ? 'System kurz' : long ? 'System lang' : nowState === 'balanced' ? 'ausgeglichen' : '—';
     const fromNrv = (k.system_now_source || '').startsWith('NRV');
+    const single = k.price_mode === 'single' || !(s['Imbalance price long'] || []).length;
     const price = k.price_mode === 'single' ? k.imbalance_price_eur_mwh : k.imbalance_price_short_eur_mwh;
     // Same-day reBAP is an operational estimate; the settled price comes later.
     const prelim = k.price_status !== 'final';
-    const act = isNum(k.afrr_de_mw) ? `aFRR DE <b>${sgn(k.afrr_de_mw)}</b> MW`
-      : isNum(k.afrr_partial_mw) ? `aFRR <b>${sgn(k.afrr_partial_mw)}</b> MW <span class="muted">(ohne ${esc((k.afrr_missing_areas || []).join(', '))})</span>` : 'aFRR —';
+    const deSeries = (s['aFRR net DE'] || []).length > 0;
+    const afrrNow = isNum(k.afrr_de_mw) ? k.afrr_de_mw : k.afrr_partial_mw;
+    const mfrrNow = isNum(k.mfrr_de_mw) ? k.mfrr_de_mw : k.mfrr_partial_mw;
+    const missing = (k.afrr_missing_areas || []).join(', ');
+    const act = isNum(afrrNow) ? `aFRR <b>${sgn(afrrNow)}</b> MW${isNum(k.afrr_de_mw) ? '' : ` <span class="muted">(ohne ${esc(missing)})</span>`}` : 'aFRR —';
+    const officialMw = isNum(k.imbalance_volume_mwh) ? k.imbalance_volume_mwh * 4 : null;
     setSig('sigSys', {
       value: isNum(k.system_now_mw) ? `${sgn(k.system_now_mw)}<small>MW</small>` : '—',
-      sub: `${short ? 'System kurz' : long ? 'System lang' : nowState === 'balanced' ? 'ausgeglichen' : '—'} · reBAP${prelim ? ' (vorl.)' : ''} <b>${fmt(price, NF2)}</b> €/MWh<br>A86 ${hhmm(k.as_of)}: <b>${sgn(k.imbalance_volume_mwh)}</b> MWh · ${act}`,
-      foot: `<span>${mtu(k.system_now_as_of || k.as_of)}</span><span title="${fromNrv ? 'Bilanz = −NRV-Saldo (netztransparenz.de); A86 folgt später' : 'Bilanz = A86 × 4'}">${fromNrv ? 'aus NRV-Saldo' : 'aus A86'}</span><span title="${k.imbalance_nowcast_points ? 'letzte Stunde inkl. vorläufiger Viertelstunden aus netztransparenz' : 'letzte Stunde aus A86'}">Ø 1 h ${sgn(k.imbalance_1h_avg_mw)} MW${k.imbalance_nowcast_points ? '*' : ''}</span>${deltas(k.system_now_changes || k.changes)}`,
+      sub: `${stateText} · reBAP${prelim ? ' (vorl.)' : ''} <b>${fmt(price, NF2)}</b> €/MWh<br>offiziell ${hhmm(k.as_of)}: <b>${sgn(officialMw)}</b> MW · ${act}`,
+      foot: `<span>${mtu(k.system_now_as_of || k.as_of)}</span><span title="${fromNrv ? 'Wert der Netzbetreiber (netztransparenz.de); der offizielle ENTSO-E-Wert folgt' : 'offizieller ENTSO-E-Wert (A86)'}">${fromNrv ? 'vorläufig' : 'offiziell'}</span><span title="${k.imbalance_nowcast_points ? 'letzte Stunde inkl. vorläufiger Viertelstunden' : 'letzte Stunde aus A86'}">Ø 1 h ${sgn(k.imbalance_1h_avg_mw)} MW${k.imbalance_nowcast_points ? '*' : ''}</span>${deltas(k.system_now_changes || k.changes)}`,
       tag: short ? { cls: 'bull', text: 'kurz' } : long ? { cls: 'bear', text: 'lang' } : null,
     });
 
-    const traces = [
-    ];
-    // Latest quarter-hours before the A86 sum is complete: the same TSO figure
-    // from netztransparenz (−RZ-Saldo ÷ 4). Same bars, pale fill + outline.
-    const nowcast = s['Net imbalance volume nowcast'] || [];
+    // One quantity, one sign, one unit: system balance in MW (A86 MWh per
+    // 15 min × 4), + = long. The latest quarter-hours come from the TSOs'
+    // own figure on netztransparenz until the A86 sum is complete.
+    const toMw = (pts) => (pts || []).map((q) => ({ t: q.t, v: isNum(q.v) ? q.v * 4 : q.v }));
+    const nowcast = toMw(s['Net imbalance volume nowcast']);
     const prelimSet = new Set(nowcast.map((q) => q.t));
-    traces.unshift(...bars([...(s['Net imbalance volume'] || []), ...nowcast], 'Bilanz', 'y', 'MWh', ['lang', 'kurz'], prelimSet)
-      .map((t, i) => Object.assign(t, { showlegend: true, name: i === 0 ? 'System lang (MWh)' : 'System kurz (MWh)' })));
+    const traces = bars([...toMw(s['Net imbalance volume']), ...nowcast], 'System', 'y', 'MW', ['lang', 'kurz'], prelimSet)
+      .map((t, i) => Object.assign(t, { name: i === 0 ? 'System lang' : 'System kurz' }));
+    const euro = { hovertemplate: '%{y:,.2f} €/MWh' };
+    if (single) traces.push(line(s['Imbalance price'], 'reBAP', cssVar('--s2'), 'solid', 'y2', euro));
+    else traces.push(line(s['Imbalance price long'], 'Preis lang', cssVar('--s2'), 'solid', 'y2', euro), line(s['Imbalance price short'], 'Preis kurz', cssVar('--s4'), 'dash', 'y2', euro));
+    const without = deSeries ? '' : ` (ohne ${missing || '—'})`;
+    const mfrrPts = (s['mFRR net DE'] || []).length ? s['mFRR net DE'] : s['mFRR net partial'];
+    const mfrrActive = (mfrrPts || []).some((q) => isNum(q.v) && q.v !== 0);  // mFRR is rare; no flat zero line
+    traces.push(line(deSeries ? s['aFRR net DE'] : s['aFRR net partial'], `aFRR${without}`, cssVar('--s3'), 'solid', 'y3'));
+    if (mfrrActive) traces.push(line(mfrrPts, `mFRR${without}`, cssVar('--s4'), 'solid', 'y3'));
+
+    // Each subplot names itself (no legend): title, unit, colour keys.
+    const sp = ' ';
+    const box = (c, t) => `<span style="color:${c}">■</span> ${t}`;
+    const dash = (c, t) => `<span style="color:${c}">━</span> ${t}`;
+    const head = (axis, text) => ({ xref: 'paper', x: 0, xshift: -48, yref: `${axis} domain`, y: 1, yanchor: 'bottom', yshift: 3,
+      xanchor: 'left', align: 'left', showarrow: false, text, font: { size: 11, color: cssVar('--text-2') } });
+    const annotations = [
+      head('y', `<b>Systembilanz</b> MW${sp}${box(cssVar('--pos'), '+ lang')}${sp}${box(cssVar('--neg'), '− kurz')}`),
+      head('y2', single ? `<b>reBAP</b> €/MWh${prelim ? `${sp}<span style="color:${cssVar('--muted')}">Schätzung, Abrechnung folgt</span>` : ''}`
+        : `<b>Ausgleichsenergiepreis</b> €/MWh${sp}${dash(cssVar('--s2'), 'lang')}${sp}${dash(cssVar('--s4'), 'kurz')}`),
+      head('y3', `<b>Regelenergie</b> MW, + = hoch${sp}${dash(cssVar('--s3'), 'aFRR')}${mfrrActive ? sp + dash(cssVar('--s4'), 'mFRR') : ''}`),
+    ];
+    const shapes = [];
     if (nowcast.length) {
-      // Legend swatch only (a scatter point takes no bar slot).
-      traces.push({ type: 'scatter', mode: 'markers', x: [null], y: [null], yaxis: 'y', name: 'vorläufig (netztransparenz)', hoverinfo: 'skip',
-        marker: { symbol: 'square', size: 12, color: cssVar('--muted'), opacity: PRELIM_OPACITY, line: { color: cssVar('--muted'), width: 1.5 } } });
+      // Preliminary quarter-hours: a quiet band behind the pale bars.
+      const x0 = Date.parse(nowcast[0].t) - 450e3, x1 = Date.parse(nowcast.at(-1).t) + 450e3;
+      shapes.push({ type: 'rect', layer: 'below', xref: 'x', yref: 'y domain', x0: utcX(x0), x1: utcX(x1), y0: 0, y1: 1,
+        fillcolor: cssVar('--line-soft'), opacity: 0.6, line: { width: 0 } });
+      annotations.push({ xref: 'x', x: utcX((x0 + x1) / 2), yref: 'y domain', y: 1, yanchor: 'bottom', yshift: 3, showarrow: false,
+        text: 'vorläufig', font: { size: 10, color: cssVar('--muted') } });
     }
-    if (k.price_mode === 'single' || !(s['Imbalance price long'] || []).length) {
-      traces.push(line(s['Imbalance price'], prelim ? 'reBAP €/MWh (vorläufig)' : 'reBAP €/MWh', cssVar('--s2'), 'solid', 'y2', { hovertemplate: '%{y:,.2f} €/MWh' }));
-    } else {
-      traces.push(line(s['Imbalance price long'], 'Preis lang', cssVar('--s2'), 'solid', 'y2', { hovertemplate: '%{y:,.2f} €/MWh' }));
-      traces.push(line(s['Imbalance price short'], 'Preis kurz', cssVar('--s4'), 'dash', 'y2', { hovertemplate: '%{y:,.2f} €/MWh' }));
-    }
-    const actPts = (s['aFRR net DE'] || []).length ? s['aFRR net DE'] : s['aFRR net partial'];
-    const actName = (s['aFRR net DE'] || []).length ? 'aFRR netto DE' : `aFRR netto ohne ${(k.afrr_missing_areas || []).join(', ') || '—'}`;
-    traces.push(line(actPts, actName, cssVar('--s3'), 'solid', 'y3'));
-    if ((s['NRV-Saldo'] || []).length) traces.push(line(s['NRV-Saldo'], 'NRV-Saldo (+ = kurz)', cssVar('--s1'), 'dot', 'y3'));
     const L = baseLayout();
     plot('chSys', traces, baseLayout({
+      showlegend: false, annotations, shapes, bargap: 0.15,
+      margin: { l: 56, r: 12, t: 24, b: 30 },
       xaxis: Object.assign(L.xaxis, { anchor: 'y3' }),
-      yaxis: Object.assign({}, L.yaxis, { domain: [0.70, 1], title: { text: 'MWh', font: { size: 10 } } }),
-      yaxis2: Object.assign({}, L.yaxis, { domain: [0.37, 0.63], title: { text: '€/MWh', font: { size: 10 } } }),
-      yaxis3: Object.assign({}, L.yaxis, { domain: [0, 0.30], title: { text: 'MW', font: { size: 10 } } }),
-      bargap: 0.15,
+      yaxis: Object.assign({}, L.yaxis, { domain: [0.66, 1] }),
+      yaxis2: Object.assign({}, L.yaxis, { domain: [0.35, 0.57] }),
+      yaxis3: Object.assign({}, L.yaxis, { domain: [0, 0.26] }),
     }));
+
+    const stateShort = short ? 'kurz' : long ? 'lang' : nowState === 'balanced' ? 'ausgeglichen' : '—';
     $('mSys').innerHTML = [
-      metric(prelim ? 'reBAP jetzt (vorläufig)' : 'reBAP jetzt', `${fmt(price, NF2)} €/MWh`, `MTU ${hhmm(k.price_as_of)}${prelim ? ' · Schätzung, Abrechnungspreis folgt' : ' · final'}`),
-      metric('reBAP Ø / Max / Min', `${fmt(k.day_avg_price_eur_mwh)} / ${fmt(k.day_max_price_eur_mwh)} / ${fmt(k.day_min_price_eur_mwh)}`, '€/MWh seit 00:00'),
-      metric('aFRR netto', isNum(k.afrr_de_mw) ? `${sgn(k.afrr_de_mw)} MW` : isNum(k.afrr_partial_mw) ? `${sgn(k.afrr_partial_mw)} MW*` : '—', esc(k.activation_source || 'keine Quelle')),
-      metric('NRV-Saldo', isNum(k.nrv_saldo_mw) ? `${sgn(k.nrv_saldo_mw)} MW` : '—', isNum(k.nrv_saldo_mw) ? `${k.nrv_state === 'deficit' ? 'Unterdeckung' : k.nrv_state === 'surplus' ? 'Überdeckung' : 'ausgeglichen'} · MTU ${hhmm(k.nrv_as_of)}` : 'netztransparenz.de nicht konfiguriert'),
+      metric('Systembilanz jetzt', isNum(k.system_now_mw) ? `${sgn(k.system_now_mw)} MW` : '—',
+        `${stateShort} · ${hhmm(k.system_now_as_of || k.as_of)} · ${fromNrv ? 'vorläufig' : 'offiziell'}`),
+      metric('reBAP jetzt', `${fmt(price, NF2)} €/MWh`, `${hhmm(k.price_as_of)} · ${prelim ? 'Schätzung' : 'final'}`),
+      metric('reBAP heute', `${fmt(k.day_avg_price_eur_mwh)} / ${fmt(k.day_max_price_eur_mwh)} / ${fmt(k.day_min_price_eur_mwh)}`, 'Ø / Max / Min €/MWh'),
+      metric('Regelenergie jetzt', isNum(afrrNow) ? `aFRR ${sgn(afrrNow)} MW` : '—',
+        `mFRR ${sgn(mfrrNow)} MW${isNum(k.afrr_de_mw) ? '' : ` · ohne ${esc(missing)}`}`),
     ].join('');
+    // Only problems are shown; the full status sits under "Quellen & Methodik".
+    // With netztransparenz active, ENTSO-E A24 is just the fallback.
     const ntpOk = src.NTP?.state === 'ok';
-    $('srcSys').innerHTML = Object.entries(src).map(([key, v]) => {
-      const secondary = ntpOk && key === '12.3.E';
-      const label = `${v.label}${secondary ? ' (nur Reserve)' : ''}: ${v.state === 'not_configured' ? 'nicht konfiguriert' : v.state}`;
-      const diag = key === 'NTP' && v.diag ? Object.entries(v.diag).map(([k, d]) => `${k}: ${d.variant || '?'} ${d.flavour || ''} ${d.error || ''}`).join(' | ') : (v.scope || '');
-      return chip(label, secondary ? '' : stateCls(v.state), diag);
-    }).join('');
+    const relevant = Object.entries(src).filter(([key]) => !(ntpOk && key === '12.3.E'));
+    const label = (key, v) => `${SYS_SOURCES[key] || v.label}: ${v.state === 'ok' ? 'ok' : v.state === 'not_configured' ? 'nicht konfiguriert' : v.state === 'partial' ? 'unvollständig' : v.state}`;
+    $('srcSys').innerHTML = relevant.filter(([, v]) => stateCls(v.state) !== 'ok').map(([key, v]) => chip(label(key, v), stateCls(v.state), v.scope || '')).join('');
+    $('srcSysAll').textContent = relevant.map(([key, v]) => `${stateCls(v.state) === 'ok' ? '✓' : '!'} ${label(key, v)}`).join(' · ');
   }
 
   const RENDER = { renewables: renderRes, load: renderLoad, borders: renderFlow, outages: renderOut, balancing: renderSys };

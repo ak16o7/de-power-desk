@@ -33,7 +33,7 @@ from fastapi.staticfiles import StaticFiles
 from app import ntp
 from app.quality import classify_notice, outage_breakdown, panel_quality
 
-VERSION = "5.5.0"
+VERSION = "5.6.0"
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR.parent / ".env")
 
@@ -116,7 +116,7 @@ DEFAULT_NEIGHBORS = list(ALL_NEIGHBORS)
 BALANCING_AREAS = ["50HERTZ", "AMPRION", "TENNET_DE", "TRANSNETBW"]
 
 SESSION = requests.Session()
-SESSION.headers.update({"User-Agent": "entsoe-desk/5.5 (+desk dashboard)"})
+SESSION.headers.update({"User-Agent": "entsoe-desk/5.6 (+desk dashboard)"})
 # The UI loads all panels at once (up to ~50 concurrent upstream calls: borders 12,
 # outages 8, balancing 2x8 + 4 ...); the default pool of 10 made
 # urllib3 discard and re-handshake connections under load.
@@ -603,7 +603,8 @@ RZ_COLUMN_BY_AREA = {"50HERTZ": "50Hertz", "AMPRION": "Amprion", "TENNET_DE": "T
 
 
 def imbalance_nowcast(a86_by_area: dict[str, dict[datetime, float]], rz_by_column: dict[str, dict[datetime, float]],
-                      a86_total: dict[datetime, float]) -> dict[datetime, float]:
+                      a86_total: dict[datetime, float],
+                      nrv: dict[datetime, float] | None = None) -> dict[datetime, float]:
     """Germany-wide imbalance (MWh) for the MTUs the A86 sum does not cover yet.
 
     The TSOs publish the same per-area figure twice: ENTSO-E A86 = -RZ-Saldo/4
@@ -612,6 +613,10 @@ def imbalance_nowcast(a86_by_area: dict[str, dict[datetime, float]], rz_by_colum
     earlier (TenneT). Per area the published A86 value wins; only a missing one
     is filled from -RZ/4. Only MTUs after the last complete A86 sum and covered
     by all four areas are returned. The UI marks them as preliminary.
+
+    Fallback (v5.6): an MTU that is still not covered by all four areas takes
+    the Germany-wide NRV-Saldo instead (-NRV/4). NRV-Saldo is the sum of the
+    four RZ-Saldi (live check 28.09.2026: max. deviation 3 MW over 63 MTUs).
     """
     last = max(a86_total) if a86_total else None
     times = set().union(*(set(v) for v in rz_by_column.values())) if rz_by_column else set()
@@ -629,7 +634,10 @@ def imbalance_nowcast(a86_by_area: dict[str, dict[datetime, float]], rz_by_colum
                 break
         else:
             out[t] = total
-    return out
+    for t, v in (nrv or {}).items():
+        if (last is None or t > last) and t not in out:
+            out[t] = -v / 4
+    return dict(sorted(out.items()))
 IMBALANCE_BUSINESS = (None, "A19")
 
 
@@ -1734,11 +1742,13 @@ def fetch_balancing(day: str | None, force: bool = False) -> dict[str, Any]:
         imbalance_state = None
         if ivp:
             imbalance_state = "surplus" if ivp[1] > 0 else "deficit" if ivp[1] < 0 else "balanced"
-        # Preliminary extension of the A86 sum from netztransparenz RZ-Saldo
-        # (only when switched on, configured and A86 comes per control area).
+        # Preliminary extension of the A86 sum from netztransparenz: per area
+        # from RZ-Saldo (needs A86 per control area), else from NRV-Saldo.
         imbalance_nowcast_series: dict[datetime, float] = {}
-        if NTP_IMBALANCE_NOWCAST and ntp_data and ntp_data.get("rz") and a86_scope == "German control areas":
-            imbalance_nowcast_series = {t: v for t, v in imbalance_nowcast(per_area, ntp_data["rz"], imbalance_volume).items() if t < end}
+        if NTP_IMBALANCE_NOWCAST and ntp_data:
+            rz = ntp_data.get("rz") if a86_scope == "German control areas" else None
+            nowcast = imbalance_nowcast(per_area, rz or {}, imbalance_volume, ntp_data.get("nrv") or {})
+            imbalance_nowcast_series = {t: v for t, v in nowcast.items() if t < end}
         imbalance_combined = {**imbalance_volume, **imbalance_nowcast_series}
         combined_last = latest_point(imbalance_combined)
         imbalance_1h = trailing_mean(imbalance_combined, combined_last[0]) if combined_last else None
