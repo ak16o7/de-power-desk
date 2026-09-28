@@ -189,7 +189,7 @@ def fetch_block(start: datetime, end: datetime, include_rz: bool = False) -> dic
     """
     session = requests.Session()
     result: dict[str, Any] = {"status": {}, "diag": {}, "nrv": {}, "afrr_up": {}, "afrr_down": {}, "mfrr_up": {}, "mfrr_down": {},
-                              "rz": {}, "rz_status": "not_requested"}
+                              "rz": {}, "rz_status": "not_requested", "aep": {}, "aep_status": "no_data"}
     jobs = {"nrv": "NrvSaldo/NRVSaldo", "afrr": "NrvSaldo/AktivierteSRL", "mfrr": "NrvSaldo/AktivierteMRL"}
     if include_rz:
         jobs["rz"] = "NrvSaldo/RZSaldo"
@@ -233,4 +233,19 @@ def fetch_block(start: datetime, end: datetime, include_rz: bool = False) -> dic
     # The optional RZ-Saldo must not turn the core NTP source "partial".
     if "rz" in result["status"]:
         result["rz_status"] = result["status"].pop("rz")
+    # AEP-Schätzer: the TSOs' same-day reBAP estimate (EUR/MWh). ENTSO-E A85
+    # republishes it 1:1 (live check 27./28.09.2026: 171 MTUs, max. 0.005
+    # EUR/MWh = rounding) but at times an hour later. Optional like RZ-Saldo.
+    diag = {}
+    result["diag"]["aep"] = diag
+    try:
+        rows = [r for r in parse_csv(_get(session, "NrvSaldo/AepSchaetzer/Betrieblich", start, end, diag)) if start <= r["ts"] < end]
+        result["aep"] = _column(rows, "AEP-Schätzer", "AEP-Schaetzer")
+        result["aep_status"] = "ok" if result["aep"] else "no_data"
+    except LookupError:
+        result["aep_status"] = "no_data"
+    except Exception as e:  # never break the core NTP block
+        result["aep_status"] = "error"
+        diag["error"] = str(e)[:200]
+        LOG.warning("netztransparenz aep: %s: %s", type(e).__name__, diag["error"])
     return result
