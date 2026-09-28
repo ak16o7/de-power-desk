@@ -8,7 +8,9 @@
   const NF2 = new Intl.NumberFormat('de-DE', { maximumFractionDigits: 2, minimumFractionDigits: 2 });
   const BORDER_NAMES = { FR: 'FR', NL: 'NL', BE: 'BE', DK_1: 'DK1', DK_2: 'DK2', AT: 'AT', CH: 'CH', CZ: 'CZ', PL: 'PL', SE_4: 'SE4', NO_2: 'NO2' };
   const ZONE_NAMES = { DE_LU: 'DE-LU', FR: 'FR', NL: 'NL', BE: 'BE' };
-  const state = { data: {}, errors: {}, resTech: 'RES', outZone: 'DE_LU', timer: null, countdown: REFRESH_S, loading: false };
+  const OUT_ZONES = ['DE_LU', 'FR', 'NL', 'BE'];
+  const PANEL_NAMES = { renewables: 'EE', load: 'Last', borders: 'Grenzen', outages: 'Kraftwerke', balancing: 'Systembilanz' };
+  const state = { data: {}, errors: {}, resTech: 'RES', timer: null, countdown: REFRESH_S, loading: false };
 
   // ---------- formatting ----------
   const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
@@ -169,16 +171,43 @@
     const el = $(id);
     if (!traces.some((t) => t.x && t.x.length)) {
       if (window.Plotly) Plotly.purge(el);
+      el.style.height = '';
       el.innerHTML = '<div class="empty">Keine Daten für diese Auswahl veröffentlicht.</div>';
       return;
     }
     if (el.querySelector('.empty')) el.innerHTML = '';
     const day = $('day').value || todayBerlin();
-    const ticks = timeTicks(day, (el.clientWidth || 800) < 560 ? 4 : 2);
+    const narrow = isNarrow(el);
+    el.dataset.narrow = String(narrow);
+    // Tick spacing follows the plot area, not the card: 6 labels need ~40 px each.
+    const m = layout.margin || {};
+    const plotW = (el.clientWidth || 800) - (m.l ?? 56) - (m.r ?? 12);
+    const ticks = timeTicks(day, plotW < 240 ? 6 : plotW < 490 ? 4 : 2);
     // The unified-hover title would show the UTC x value; the Berlin time row
     // from withBerlinTime replaces it.
     layout.xaxis = Object.assign({}, layout.xaxis, ticks, { unifiedhovertitle: { text: ' ' } });
-    Plotly.react(el, withBerlinTime(traces), layout, PLOT_CFG);
+    if (narrow) {
+      // Phones: the horizontal legend wraps into several rows. Anchored to the
+      // figure top it pushes the plot area down instead of covering the data;
+      // fitLegend then grows the card so the plot keeps its height.
+      layout.legend = Object.assign({}, layout.legend, { yref: 'container', y: 1, yanchor: 'top', x: 0, font: { size: 10 } });
+      layout.margin = Object.assign({}, m, { t: 12 });
+    }
+    Plotly.react(el, withBerlinTime(traces), layout, PLOT_CFG).then(() => fitLegend(el, narrow));
+  }
+  const NARROW_PX = 560;
+  const isNarrow = (el) => (el.clientWidth || 800) < NARROW_PX;
+  function fitLegend(el, narrow) {
+    const lg = narrow && el._fullLayout?.showlegend ? el.querySelector('.legend') : null;
+    const extra = lg ? Math.max(0, Math.ceil(lg.getBoundingClientRect().height) - 28) : 0;
+    let want = '';
+    if (extra) {
+      const prev = el.style.height;
+      el.style.height = '';
+      want = `${el.clientHeight + extra}px`;  // CSS height of the card + legend rows
+      el.style.height = prev;
+    }
+    if (el.style.height !== want) { el.style.height = want; Plotly.Plots.resize(el); }
   }
   const metric = (label, value, small = '') => `<div class="metric"><span>${esc(label)}</span><strong>${value}</strong><small>${small}</small></div>`;
 
@@ -318,9 +347,26 @@
         return `<tr><td><b>${ZONE_NAMES[z]}</b></td><td class="num">${fmt(r.unavailable_mw)}</td><td class="num">${fmt(r.forced_mw)}</td><td class="num">${fmt(r.planned_mw)}</td><td class="num">${sgn(r.delta_24h_mw)}</td><td class="num">${sgn(r.forced_delta_24h_mw)}</td><td class="num">${fmt(r.active_events)}</td><td>${src}${r.complete === false ? ' <span class="flag">⚠ unvollständig</span>' : ''}</td></tr>`;
       }).join('') + '</tbody>';
 
-    const z = state.outZone;
-    plot('chOut', [line(d.series?.[z], `Nicht verfügbare Leistung ${ZONE_NAMES[z]}`, cssVar('--s1'), 'solid', 'y', { showlegend: false })],
-      baseLayout({ margin: { l: 56, r: 12, t: 10, b: 30 }, yaxis: Object.assign(baseLayout().yaxis, { title: { text: `MW · ${ZONE_NAMES[z]}`, font: { size: 10 } }, rangemode: 'tozero' }) }));
+    // All zones in one chart, like the table above. Fixed categorical order
+    // (validated: adjacent pairs pass CVD/normal-vision in both themes);
+    // direct labels at the line ends are the second channel besides colour.
+    const zoneColors = { DE_LU: cssVar('--s1'), FR: cssVar('--s2'), NL: cssVar('--s3'), BE: cssVar('--s4') };
+    const outTraces = OUT_ZONES.map((zn) => line(d.series?.[zn], ZONE_NAMES[zn], zoneColors[zn], 'solid', 'y',
+      { legendrank: OUT_ZONES.indexOf(zn) }));
+    const ends = OUT_ZONES.map((zn) => ({ zn, p: (d.series?.[zn] || []).at(-1) })).filter((e) => e.p && isNum(e.p.v));
+    const top = Math.max(1, ...ends.map((e) => e.p.v));
+    const minGap = top * 0.09;  // keep end labels apart when zones sit close (e.g. NL/BE)
+    const placed = ends.sort((a, b) => a.p.v - b.p.v).map((e) => ({ ...e, y: e.p.v }));
+    placed.forEach((e, i) => { if (i && e.y - placed[i - 1].y < minGap) e.y = placed[i - 1].y + minGap; });
+    const labels = placed.map((e) => ({
+      x: utcX(e.p.t), y: e.y, xref: 'x', yref: 'y', xanchor: 'left', xshift: 6, showarrow: false,
+      text: `<span style="color:${zoneColors[e.zn]}">■</span> ${ZONE_NAMES[e.zn]}`, font: { size: 11, color: cssVar('--text-2') },
+    }));
+    plot('chOut', outTraces, baseLayout({
+      margin: { l: 56, r: 64, t: 28, b: 30 }, annotations: labels,
+      showlegend: !isNarrow($('chOut')),  // phones: the end labels alone name the lines
+      yaxis: Object.assign(baseLayout().yaxis, { title: { text: 'MW nicht verfügbar', font: { size: 10 } }, rangemode: 'tozero' }),
+    }));
 
     const typeLabel = (n) => (n.notice_type === 'forced' ? '<span class="flag">ungeplant</span>' : n.notice_type === 'planned' ? 'geplant' : 'unbekannt');
     const window_ = (n) => `${dayTime(n.event_start)} – ${n.duration_class === 'open_ended' ? 'offen' : dayTime(n.event_end)}`;
@@ -448,18 +494,21 @@
     const partial = PANELS.filter((n) => state.data[n]?.quality?.state === 'partial');
     // Last time the server rebuilt any panel; per-tile "min alt" shows data age.
     const built = PANELS.map((n) => Date.parse(state.data[n]?.updated)).filter(Number.isFinite);
-    const stamp = built.length ? `Server-Stand ${new Date(Math.max(...built)).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Berlin' })}` : 'Server-Stand —';
-    if (failed.length) setStatus('bad', `${stamp} · Fehler: ${failed.join(', ')} (${state.errors[failed[0]]})`);
-    else if (partial.length) setStatus('warn', `${stamp} · teilweise: ${partial.join(', ')}`);
-    else setStatus('ok', `${stamp} · alle Quellen vollständig`);
+    const stamp = built.length ? `Stand ${new Date(Math.max(...built)).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Berlin' })}` : 'Stand —';
+    const names = (list) => list.map((n) => PANEL_NAMES[n] || n).join(', ');
+    if (failed.length) setStatus('bad', stamp, `Fehler: ${names(failed)}`, `${names(failed)}: ${state.errors[failed[0]]}`);
+    else if (partial.length) setStatus('warn', stamp, `${names(partial)} unvollständig`, 'Mindestens eine Quelle ist unvollständig; Details stehen im jeweiligen Panel.');
+    else setStatus('ok', stamp, '', 'Alle Quellen vollständig');
   }
 
   async function loadAll() {
     if (state.loading) return;
     state.loading = true;
-    setStatus('warn', 'lädt…');
+    setStatus('warn', 'lädt…', '');
+    $('refresh').classList.add('spinning');
     await loadPanels();
     state.loading = false;
+    $('refresh').classList.remove('spinning');
     state.countdown = state.background ? FRESHNESS_POLL_S : REFRESH_S;
     updateStatus();
   }
@@ -474,20 +523,25 @@
       const changed = PANELS.filter((n) => f.panels?.[n] && f.panels[n] !== state.data[n]?.updated);
       if (changed.length) {
         state.loading = true;
+        $('refresh').classList.add('spinning');
         await loadPanels(changed);
         state.loading = false;
+        $('refresh').classList.remove('spinning');
       }
       updateStatus();
     } catch (_) { /* keep the current view; next poll retries */ }
   }
 
-  function setStatus(cls, text) {
+  // Short line (dot + "Stand 14:38" + problem, if any); everything else in the
+  // tooltip, so the header stays one row on small screens.
+  function setStatus(cls, text, detail = '', info = '') {
     $('statusDot').className = 'dot ' + cls;
-    const next = isLive() && $('auto').checked && !state.loading
-      ? (state.background ? ` · live, Prüfung in ${Math.max(0, state.countdown)} s` : ` · nächstes Update in ${Math.max(0, state.countdown)} s`)
-      : '';
-    $('statusText').textContent = text + next;
-    state.lastStatus = [cls, text];
+    $('statusText').textContent = text;
+    $('statusDetail').textContent = detail ? `· ${detail}` : '';
+    const live = isLive() && $('auto').checked && !state.loading;
+    const next = live ? (state.background ? `Live: nächste Prüfung in ${Math.max(0, state.countdown)} s` : `Nächstes Update in ${Math.max(0, state.countdown)} s`) : 'Live aus';
+    $('status').title = [info, next].filter(Boolean).join(' · ');
+    state.lastStatus = [cls, text, detail, info];
   }
   const isLive = () => ($('day').value || todayBerlin()) === todayBerlin();
 
@@ -543,8 +597,17 @@
     ['fZone', 'fType', 'fState'].forEach((id) => $(id).addEventListener('change', renderNotices));
     $('fText').addEventListener('input', renderNotices);
     segment('resTech', 'resTech', renderRes);
-    segment('outZone', 'outZone', renderOut);
     window.matchMedia('(prefers-color-scheme: light)').addEventListener?.('change', () => { if (!storedTheme()) applyTheme(systemTheme()); });
+    // Rotating a phone / resizing a window across the breakpoint: re-render
+    // so legend placement and tick spacing match the new width.
+    let resizeTimer = null;
+    window.addEventListener('resize', () => {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        const flipped = [...document.querySelectorAll('.js-plotly-plot')].some((el) => el.dataset.narrow !== String(isNarrow(el)));
+        if (flipped) Object.values(RENDER).forEach((f) => f());
+      }, 250);
+    });
     try {
       const h = await getJSON('/health', 30000);
       $('authChip').classList.toggle('hidden', !!h.auth_enabled || !!h.public_ok);
