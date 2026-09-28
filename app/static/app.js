@@ -9,8 +9,16 @@
   const BORDER_NAMES = { FR: 'FR', NL: 'NL', BE: 'BE', DK_1: 'DK1', DK_2: 'DK2', AT: 'AT', CH: 'CH', CZ: 'CZ', PL: 'PL', SE_4: 'SE4', NO_2: 'NO2' };
   const ZONE_NAMES = { DE_LU: 'DE-LU', FR: 'FR', NL: 'NL', BE: 'BE' };
   const OUT_ZONES = ['DE_LU', 'FR', 'NL', 'BE'];
+  // ENTSO-E production types (API names are English).
+  const FUEL_DE = { Biomass: 'Biomasse', Lignite: 'Braunkohle', 'Coal gas': 'Kokereigas', Gas: 'Erdgas', 'Hard coal': 'Steinkohle', Oil: 'Öl',
+    'Oil shale': 'Ölschiefer', Peat: 'Torf', Geothermal: 'Geothermie', 'Pumped storage': 'Pumpspeicher', 'Run-of-river': 'Laufwasser',
+    'Hydro reservoir': 'Speicherwasser', Marine: 'Meeresenergie', Nuclear: 'Kernenergie', 'Other RES': 'Sonstige erneuerbare', Solar: 'Solar',
+    Waste: 'Abfall', 'Wind offshore': 'Wind offshore', 'Wind onshore': 'Wind onshore', Other: 'Sonstige', Battery: 'Batterie' };
+  const fuel = (f) => esc(FUEL_DE[f] || f || '');
+  const DOC_DE = { A80: 'Blockmeldungen', A77: 'Anlagenmeldungen' };
+  const STATE_DE = { ok: 'ok', partial: 'unvollständig', no_data: 'keine Daten', empty: 'keine Daten', error: 'Fehler', not_configured: 'nicht konfiguriert' };
   const PANEL_NAMES = { renewables: 'EE', load: 'Last', borders: 'Grenzen', outages: 'Kraftwerke', balancing: 'Systembilanz' };
-  const state = { data: {}, errors: {}, resTech: 'RES', timer: null, countdown: REFRESH_S, loading: false };
+  const state = { data: {}, errors: {}, hidden: {}, zoom: {}, resTech: 'RES', timer: null, countdown: REFRESH_S, loading: false };
 
   // ---------- formatting ----------
   const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
@@ -132,12 +140,13 @@
     return Object.assign({
       paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
       font: { color: text2, size: 11, family: 'Inter, system-ui, sans-serif' },
-      margin: { l: 56, r: 12, t: 28, b: 30 },
+      margin: { l: 56, r: 12, t: 8, b: 30 },
+      showlegend: false,  // keys live in the HTML chart head
       hovermode: 'x unified',
       hoverlabel: { bgcolor: cssVar('--surface-2'), bordercolor: cssVar('--line'), font: { color: cssVar('--text') } },
-      legend: { orientation: 'h', x: 0, y: 1.1, font: { size: 11 } },
+      barcornerradius: 2,
       xaxis: { type: 'date', tickformat: '%H:%M', hoverformat: '%d.%m. %H:%M', gridcolor: grid, linecolor: grid, zeroline: false, color: muted },
-      yaxis: { gridcolor: grid, zerolinecolor: cssVar('--line'), ticksuffix: '', color: muted, separatethousands: true, tickformat: ',.0f' },
+      yaxis: { gridcolor: grid, zerolinecolor: cssVar('--line'), ticksuffix: '', color: muted, separatethousands: true, tickformat: ',.0f', fixedrange: true },
       separators: ',.',
     }, extra);
   }
@@ -149,14 +158,14 @@
   // per-point opacity (no extra traces, so every bar keeps its width and
   // position); the chart adds a quiet "vorläufig" band behind them.
   const PRELIM_OPACITY = 0.55;
-  const bars = (pts, name, yaxis = 'y2', unit = 'MW', names = ['über Prognose', 'unter Prognose'], prelim = null) => {
+  const bars = (pts, yaxis = 'y', unit = 'MW', names = ['über Prognose', 'unter Prognose'], prelim = null) => {
     const pos = cssVar('--pos'), neg = cssVar('--neg');
     // Exact zeros belong to neither side (e.g. A86 "balanced"); they would be invisible anyway.
     const p = (pts || []).map((q) => ({ t: q.t, v: q.v > 0 ? q.v : null }));
     const n = (pts || []).map((q) => ({ t: q.t, v: q.v < 0 ? q.v : null }));
     const isPre = (q) => !!prelim && prelim.has(q.t);
     const trace = (arr, color, label) => ({
-      type: 'bar', x: xs(arr), y: ys(arr), name: `${name}: ${label}`, yaxis, showlegend: false,
+      type: 'bar', x: xs(arr), y: ys(arr), name: label, yaxis,
       // Pre-formatted (de-DE, explicit sign): Plotly's '%{y:+,.0f}' is not applied in unified hover and printed raw values like '-58.431'.
       customdata: arr.map((q) => `${sgn(q.v)} ${unit}${isPre(q) ? ' · vorläufig' : ''}`),
       hovertemplate: '%{customdata}',
@@ -164,47 +173,99 @@
     });
     return [trace(p, pos, names[0]), trace(n, neg, names[1])];
   };
-  function plot(id, traces, layout) {
+  // Each panel stacks single charts, each with an HTML head (title, unit,
+  // keys). Charts of one panel share the x range and zoom together.
+  function plot(id, traces, layout, { xLabels = true, range = null } = {}) {
     const el = $(id);
     if (!traces.some((t) => t.x && t.x.length)) {
       if (window.Plotly) Plotly.purge(el);
-      el.style.height = '';
+      delete el.dataset.sync;
       el.innerHTML = '<div class="empty">Keine Daten für diese Auswahl veröffentlicht.</div>';
       return;
     }
     if (el.querySelector('.empty')) el.innerHTML = '';
     const day = $('day').value || todayBerlin();
-    const narrow = isNarrow(el);
-    el.dataset.narrow = String(narrow);
+    el.dataset.narrow = String(isNarrow(el));
+    const hidden = state.hidden[id];
+    if (hidden) traces.forEach((t) => { if (hidden.has(t.name)) t.visible = false; });
     // Tick spacing follows the plot area, not the card: 6 labels need ~40 px each.
     const m = layout.margin || {};
     const plotW = (el.clientWidth || 800) - (m.l ?? 56) - (m.r ?? 12);
     const ticks = timeTicks(day, plotW < 240 ? 6 : plotW < 490 ? 4 : 2);
+    // A zoom (kept per chart group) survives the refreshes of the same day.
+    const zoom = state.zoom[groupOf(id)[0]];
+    if (zoom) range = zoom;
     // The unified-hover title would show the UTC x value; the Berlin time row
     // from withBerlinTime replaces it.
-    layout.xaxis = Object.assign({}, layout.xaxis, ticks, { unifiedhovertitle: { text: ' ' } });
-    if (narrow && layout.showlegend !== false) {
-      // Phones: the horizontal legend wraps into several rows. Anchored to the
-      // figure top it pushes the plot area down instead of covering the data;
-      // fitLegend then grows the card so the plot keeps its height.
-      layout.legend = Object.assign({}, layout.legend, { yref: 'container', y: 1, yanchor: 'top', x: 0, font: { size: 10 } });
-      layout.margin = Object.assign({}, m, { t: 12 });
-    }
-    Plotly.react(el, withBerlinTime(traces), layout, PLOT_CFG).then(() => fitLegend(el, narrow));
+    layout.xaxis = Object.assign({}, layout.xaxis, ticks, { unifiedhovertitle: { text: ' ' }, showticklabels: xLabels },
+      range ? { range, autorange: false } : {});
+    if (!xLabels) layout.margin = Object.assign({}, m, { b: 6 });
+    Plotly.react(el, withBerlinTime(traces), layout, PLOT_CFG).then(() => syncZoom(el));
   }
   const NARROW_PX = 560;
   const isNarrow = (el) => (el.clientWidth || 800) < NARROW_PX;
-  function fitLegend(el, narrow) {
-    const lg = narrow && el._fullLayout?.showlegend ? el.querySelector('.legend') : null;
-    const extra = lg ? Math.max(0, Math.ceil(lg.getBoundingClientRect().height) - 28) : 0;
-    let want = '';
-    if (extra) {
-      const prev = el.style.height;
-      el.style.height = '';
-      want = `${el.clientHeight + extra}px`;  // CSS height of the card + legend rows
-      el.style.height = prev;
+  // Common x range of one panel's charts (bars are centred on the MTU start).
+  function xRange(...lists) {
+    let lo = Infinity, hi = -Infinity;
+    lists.flat().forEach((t) => (t.x || []).forEach((x, i) => {
+      if (t.y?.[i] === null || t.y?.[i] === undefined) return;
+      const v = Date.parse(`${x}Z`);
+      if (v < lo) lo = v;
+      if (v > hi) hi = v;
+    }));
+    return Number.isFinite(lo) ? [utcX(lo - 450e3), utcX(hi + 450e3)] : null;
+  }
+  // Drag to zoom the time axis; the charts of one panel follow each other,
+  // double-click resets. The zoom is kept in state, so refreshes keep it.
+  const SYNC = [['chRes', 'chResDiff'], ['chLoad', 'chLoadDiff'], ['chSys', 'chRebap', 'chReg']];
+  const groupOf = (id) => SYNC.find((g) => g.includes(id)) || [id];
+  let syncing = false;
+  function syncZoom(el) {
+    if (el.dataset.sync || !el.on) return;
+    el.dataset.sync = '1';
+    const group = groupOf(el.id);
+    el.on('plotly_relayout', (ev) => {
+      if (syncing) return;
+      const r = 'xaxis.range[0]' in ev ? [ev['xaxis.range[0]'], ev['xaxis.range[1]']] : ev['xaxis.range'] || null;
+      if (!r) return;
+      state.zoom[group[0]] = r;
+      syncing = true;
+      Promise.all(group.filter((o) => o !== el.id && $(o)?.data).map((o) => Plotly.relayout($(o), { 'xaxis.range': r })))
+        .finally(() => { syncing = false; });
+    });
+    el.on('plotly_doubleclick', () => {
+      delete state.zoom[group[0]];
+      RENDER[CHART_OWNER[el.id]]?.();
+    });
+  }
+
+  // ---------- chart heads ----------
+  // Title + unit on the left, keys on the right; line keys show the real
+  // dash pattern and toggle their series. Wraps on phones like any text.
+  const DASH = { solid: '', dash: '5 3', dot: '0.5 3.5', dashdot: '6 3 0.5 3' };
+  function swatch(k) {
+    if (k.kind === 'bar') {
+      return `<svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><rect width="10" height="10" rx="2" fill="${k.color}" fill-opacity="${k.opacity ?? 1}"/></svg>`;
     }
-    if (el.style.height !== want) { el.style.height = want; Plotly.Plots.resize(el); }
+    const dash = DASH[k.dash || 'solid'];
+    return `<svg width="22" height="10" viewBox="0 0 22 10" aria-hidden="true"><line x1="2" y1="5" x2="20" y2="5" stroke="${k.color}" stroke-width="2" stroke-linecap="round"${dash ? ` stroke-dasharray="${dash}"` : ''}/></svg>`;
+  }
+  const lk = (name, color, dash = 'solid') => ({ name, color, dash });
+  const bk = (name, color, opacity = 1) => ({ name, color, opacity, kind: 'bar', toggle: false });
+  function head(id, title, note = '', keys = []) {
+    const el = $(id);
+    let h = el.previousElementSibling;
+    if (!h || !h.classList.contains('chead')) {
+      h = document.createElement('div');
+      h.className = 'chead';
+      el.before(h);
+    }
+    const hidden = state.hidden[id] || new Set();
+    const key = (k) => (k.toggle === false
+      ? `<span class="key">${swatch(k)}${esc(k.name)}</span>`
+      : `<button type="button" class="key" data-chart="${id}" data-name="${esc(k.name)}" aria-pressed="${!hidden.has(k.name)}" title="ein-/ausblenden">${swatch(k)}${esc(k.name)}</button>`);
+    h.innerHTML = `<div class="ct"><b>${esc(title)}</b>${note ? `<span>${note}</span>` : ''}</div>`
+      + (keys.length ? `<div class="ck">${keys.map(key).join('')}</div>` : '');
   }
   const metric = (label, value, small = '') => `<div class="metric"><span>${esc(label)}</span><strong>${value}</strong><small>${small}</small></div>`;
 
@@ -216,7 +277,7 @@
     const tech = k.tech_error_mw || {};
     setSig('sigRes', {
       value: mw(k.res_error_mw),
-      sub: `Solar <b>${sgn(tech.Solar)}</b> · On <b>${sgn(tech['Wind Onshore'])}</b> · Off <b>${sgn(tech['Wind Offshore'])}</b><br>vs. ID-Stand 08:00: <b>${sgn(k.res_error_id_mw)}</b> MW`,
+      sub: `Solar <b>${sgn(tech.Solar)}</b> · On <b>${sgn(tech['Wind Onshore'])}</b> · Off <b>${sgn(tech['Wind Offshore'])}</b><br>vs. Intraday 08:00: <b>${sgn(k.res_error_id_mw)}</b> MW`,
       foot: `<span>${mtu(k.as_of)}</span><span title="Mittel der letzten 4 MTUs; die jüngste MTU ist noch eine Schätzung">Ø 1 h ${sgn(k.res_error_1h_mw)} MW</span><span>Ø Tag ${sgn(k.day_avg_error_mw)} MW</span>${deltas(k.changes)}`,
       tag: dir(k.res_error_mw, 300, 'bear'),
     });
@@ -233,27 +294,24 @@
     const T = state.resTech;
     const pts = (suffix) => s[`${T} ${suffix}`] || [];
     const err = T === 'RES' ? s['RES Forecast Error'] : diff(pts('Actual'), pts('Day-ahead'));
-    const traces = [
-      line(pts('Actual'), 'Ist', cssVar('--s1')),
-      line(pts('Day-ahead'), 'DA (D-1 18:00)', cssVar('--s2'), 'dash'),
-      line(pts('Intraday'), 'ID (D 08:00)', cssVar('--s3'), 'dot'),
-      line(pts('Current'), 'Laufend (A18)', cssVar('--s4'), 'dashdot'),
-      ...bars(err, 'Ist − DA'),
-    ];
-    plot('chRes', traces, baseLayout({
-      xaxis: Object.assign(baseLayout().xaxis, { anchor: 'y2' }),
-      yaxis: Object.assign(baseLayout().yaxis, { domain: [0.36, 1], title: { text: 'MW', font: { size: 10 } } }),
-      yaxis2: Object.assign(baseLayout().yaxis, { domain: [0, 0.28], title: { text: 'Ist − DA', font: { size: 10 } } }),
-      bargap: 0.15,
-    }));
+    const C = ['--s1', '--s2', '--s3', '--s4'].map(cssVar);
+    const series = [['Ist', 'Actual', 'solid'], ['Day-Ahead', 'Day-ahead', 'dash'], ['Intraday 08:00', 'Intraday', 'dot'], ['laufend', 'Current', 'dashdot']];
+    const main = series.map(([name, key, dash], i) => line(pts(key), name, C[i], dash));
+    const dev = bars(err);
+    const range = xRange(main, dev);
+    const techName = { RES: 'Wind und Solar', Solar: 'Solar', 'Wind Onshore': 'Wind onshore', 'Wind Offshore': 'Wind offshore' }[T] || T;
+    head('chRes', techName, 'MW', series.map(([name, , dash], i) => lk(name, C[i], dash)));
+    plot('chRes', main, baseLayout(), { xLabels: false, range });
+    head('chResDiff', 'Abweichung Ist − Day-Ahead', 'MW', [bk('über Prognose', cssVar('--pos')), bk('unter Prognose', cssVar('--neg'))]);
+    plot('chResDiff', dev, baseLayout({ bargap: 0.15 }), { range });
     const errVals = (err || []).map((p) => p.v);
     const mae = errVals.length ? errVals.reduce((a, v) => a + Math.abs(v), 0) / errVals.length : null;
     const maxAbs = errVals.length ? errVals.reduce((a, v) => (Math.abs(v) > Math.abs(a) ? v : a), 0) : null;
     $('mRes').innerHTML = [
-      metric('Abweichung jetzt (Ist − DA)', `${sgn(T === 'RES' ? k.res_error_mw : tech[T])} MW`, `MTU ${hhmm(k.as_of)}`),
-      metric('MAE bisher', `${fmt(mae)} MW`, T === 'RES' ? 'mittlere absolute Abweichung' : T),
+      metric('Abweichung jetzt', `${sgn(T === 'RES' ? k.res_error_mw : tech[T])} MW`, `Ist − Day-Ahead · ${hhmm(k.as_of)}`),
+      metric('Mittlere Abweichung', `${fmt(mae)} MW`, 'Betrag, seit 00:00'),
       metric('Größte Abweichung', `${sgn(maxAbs)} MW`, 'seit 00:00'),
-      metric('Ist-Daten bis', hhmm(d.freshness?.actual_through), 'letzte vollständige MTU'),
+      metric('Ist-Daten bis', hhmm(d.freshness?.actual_through), 'zuletzt vollständig'),
     ].join('');
   }
 
@@ -267,24 +325,23 @@
       foot: `<span>${mtu(k.surprise_as_of)}</span><span>Ø 1 h ${sgn(k.residual_surprise_1h_mw)} MW</span><span>Ø Tag ${sgn(k.day_avg_surprise_mw)} MW</span>`,
       tag: dir(k.residual_surprise_mw, 500, 'bull'),
     });
-    plot('chLoad', [
-      line(s['Load Actual'], 'Last Ist', cssVar('--s1')),
-      line(s['Load Forecast'], 'Last DA', cssVar('--s1'), 'dash'),
-      line(s['Residual Load Actual'], 'Residual Ist', cssVar('--s3')),
-      line(s['Residual Load Forecast'], 'Residual DA', cssVar('--s3'), 'dash'),
-      ...bars(s['Residual Load Surprise'], 'Residual Ist − DA', 'y2', 'MW', ['höher', 'niedriger']),
-    ], baseLayout({
-      xaxis: Object.assign(baseLayout().xaxis, { anchor: 'y2' }),
-      yaxis: Object.assign(baseLayout().yaxis, { domain: [0.36, 1], title: { text: 'MW', font: { size: 10 } } }),
-      yaxis2: Object.assign(baseLayout().yaxis, { domain: [0, 0.28], title: { text: 'Resid. Ist − DA', font: { size: 10 } } }),
-      bargap: 0.15,
-    }));
+    // Colour = quantity (Last / Residuallast), dash = Ist / Day-Ahead.
+    const cL = cssVar('--s1'), cR = cssVar('--s3');
+    const keys = [lk('Last Ist', cL), lk('Last Day-Ahead', cL, 'dash'), lk('Residuallast Ist', cR), lk('Residuallast Day-Ahead', cR, 'dash')];
+    const main = [s['Load Actual'], s['Load Forecast'], s['Residual Load Actual'], s['Residual Load Forecast']]
+      .map((pts, i) => line(pts, keys[i].name, keys[i].color, keys[i].dash));
+    const dev = bars(s['Residual Load Surprise'], 'y', 'MW', ['höher als Prognose', 'niedriger als Prognose']);
+    const range = xRange(main, dev);
+    head('chLoad', 'Last und Residuallast', 'MW', keys);
+    plot('chLoad', main, baseLayout(), { xLabels: false, range });
+    head('chLoadDiff', 'Residuallast Ist − Day-Ahead', 'MW', [bk('höher als Prognose', cssVar('--pos')), bk('niedriger als Prognose', cssVar('--neg'))]);
+    plot('chLoadDiff', dev, baseLayout({ bargap: 0.15 }), { range });
     const la = ys(s['Load Actual']);
     $('mLoad').innerHTML = [
-      metric('Residuallast jetzt', `${fmt(k.residual_load_mw)} MW`, `MTU ${hhmm(k.as_of)}`),
-      metric('Last Ist − DA', `${sgn(k.load_error_mw)} MW`, 'Lastprognosefehler'),
-      metric('Residual Ist − DA Ø', `${sgn(k.day_avg_surprise_mw)} MW`, 'seit 00:00'),
-      metric('Lastspitze bisher', `${fmt(la.length ? Math.max(...la) : null)} MW`, 'ENTSO-E A65'),
+      metric('Residuallast jetzt', `${fmt(k.residual_load_mw)} MW`, hhmm(k.as_of)),
+      metric('Lastprognosefehler', `${sgn(k.load_error_mw)} MW`, 'Last Ist − Day-Ahead'),
+      metric('Abweichung Ø', `${sgn(k.day_avg_surprise_mw)} MW`, 'Residuallast seit 00:00'),
+      metric('Lastspitze', `${fmt(la.length ? Math.max(...la) : null)} MW`, 'seit 00:00'),
     ].join('');
   }
 
@@ -295,7 +352,7 @@
     const flags = d.flags || [];
     setSig('sigFlow', {
       value: mw(k.net_import_mw),
-      sub: `Intraday-XB <b>${sgn(k.intraday_xb_mw)}</b> · Phys. − Fahrplan <b>${sgn(k.unscheduled_mw)}</b><br>DA-Fahrplan <b>${sgn(k.da_schedule_mw)}</b> MW`,
+      sub: `Intraday <b>${sgn(k.intraday_xb_mw)}</b> · Phys. − Fahrplan <b>${sgn(k.unscheduled_mw)}</b><br>DA-Fahrplan <b>${sgn(k.da_schedule_mw)}</b> MW`,
       foot: `<span>${mtu(k.as_of)}</span><span>${cov.physical_series ?? 0}/${cov.expected ?? 0} Grenzen</span>${flags.length ? `<span class="flag">⚠ ${flags.map((f) => BORDER_NAMES[f.border] || f.border).join(', ')} 0 MW</span>` : ''}`,
       tag: null,
     });
@@ -307,22 +364,21 @@
     const src = b === 'TOTAL'
       ? { p: s['Net Physical Import'], da: s['Net DA Schedule'], tot: s['Net Total Schedule'] }
       : { p: d.borders?.[b]?.physical, da: d.borders?.[b]?.scheduled, tot: d.borders?.[b]?.total };
-    plot('chFlow', [
-      line(src.p, 'Physisch', cssVar('--s1')),
-      line(src.da, 'DA-Fahrplan', cssVar('--s2'), 'dash'),
-      line(src.tot, 'Gesamtfahrplan (inkl. ID)', cssVar('--s3'), 'dot'),
-    ], baseLayout({ yaxis: Object.assign(baseLayout().yaxis, { title: { text: 'MW Import (+) / Export (−)', font: { size: 10 } } }) }));
+    const keys = [lk('Physisch', cssVar('--s1')), lk('Day-Ahead-Fahrplan', cssVar('--s2'), 'dash'), lk('Gesamtfahrplan inkl. Intraday', cssVar('--s3'), 'dot')];
+    head('chFlow', b === 'TOTAL' ? 'Netto-Import, alle Grenzen' : `Grenze ${BORDER_NAMES[b] || b}`, 'MW · + Import, − Export', keys);
+    plot('chFlow', [src.p, src.da, src.tot].map((pts, i) => line(pts, keys[i].name, keys[i].color, keys[i].dash)), baseLayout());
 
     const rows = (d.table || []).slice().sort((a, c) => Math.abs(c.physical ?? 0) - Math.abs(a.physical ?? 0));
     const flagText = { zero_flow_all_day: '0 MW ganztägig – Ausfall/Wartung?', zero_physical_with_schedule: '0 MW physisch trotz Fahrplan' };
-    $('tFlow').innerHTML = `<thead><tr><th>Grenze</th><th class="num">Physisch</th><th class="num">DA</th><th class="num">Gesamt</th><th class="num">Intraday-XB</th><th class="num" title="Pro Grenze: v. a. Ring-/Transitflüsse (Core: Fahrplan ist rechnerische Zerlegung). Summe: Ringflüsse heben sich auf; Rest = Redispatch/Countertrading, Regelenergie, Datenabweichungen – kein Handelssignal.">Phys. − Fahrplan</th><th>Hinweis</th></tr></thead><tbody>` +
+    $('tFlow').innerHTML = `<thead><tr><th>Grenze</th><th class="num">Physisch</th><th class="num">Day-Ahead</th><th class="num">Gesamt</th><th class="num">Intraday</th><th class="num" title="Pro Grenze: v. a. Ring-/Transitflüsse (Core: Fahrplan ist rechnerische Zerlegung). Summe: Ringflüsse heben sich auf; Rest = Redispatch/Countertrading, Regelenergie, Datenabweichungen – kein Handelssignal.">Phys. − Fahrplan</th><th>Hinweis</th></tr></thead><tbody>` +
       rows.map((r) => `<tr><td>${esc(BORDER_NAMES[r.border] || r.border)}</td><td class="num">${sgn(r.physical)}</td><td class="num">${sgn(r.scheduled)}</td><td class="num">${sgn(r.total)}</td><td class="num">${sgn(r.intraday)}</td><td class="num">${sgn(r.unscheduled)}</td><td>${r.flag ? `<span class="flag">⚠ ${esc(flagText[r.flag] || r.flag)}</span>` : ''}</td></tr>`).join('') +
       `<tr><td><b>Summe</b></td><td class="num"><b>${sgn(k.net_import_mw)}</b></td><td class="num"><b>${sgn(k.da_schedule_mw)}</b></td><td class="num"><b>${sgn(k.total_schedule_mw)}</b></td><td class="num"><b>${sgn(k.intraday_xb_mw)}</b></td><td class="num"><b>${sgn(k.unscheduled_mw)}</b></td><td class="muted">MTU ${hhmm(k.as_of)}</td></tr></tbody>`;
-    $('srcFlow').innerHTML = [
-      chip(`Physisch ${cov.physical_series}/${cov.expected}`, cov.physical_total_complete ? 'ok' : 'warn'),
-      chip(`DA ${cov.scheduled_series}/${cov.expected}`, cov.scheduled_total_complete ? 'ok' : 'warn'),
-      chip(`Gesamtfahrplan ${cov.total_series}/${cov.expected}`, cov.total_schedule_complete ? 'ok' : 'warn', 'A09 contract A05'),
-    ].join('');
+    // Chips only for gaps; the full coverage sits under "Quellen & Methodik".
+    const covItems = [['Physisch', cov.physical_series, cov.physical_total_complete], ['Day-Ahead-Fahrplan', cov.scheduled_series, cov.scheduled_total_complete],
+      ['Gesamtfahrplan', cov.total_series, cov.total_schedule_complete]];
+    const covText = ([name, n]) => `${name}: ${n ?? 0} von ${cov.expected ?? 0} Grenzen`;
+    $('srcFlow').innerHTML = covItems.filter(([, , ok]) => !ok).map((c) => chip(covText(c), 'warn')).join('');
+    $('srcFlowAll').textContent = covItems.map((c) => `${c[2] ? '✓' : '!'} ${covText(c)}`).join(' · ');
   }
 
   function renderOut() {
@@ -337,20 +393,24 @@
       tag: dir(de.delta_24h_mw, 300, 'bull'),
     });
     const zoneOrder = ['DE_LU', 'FR', 'NL', 'BE'];
-    $('tZones').innerHTML = `<thead><tr><th>Zone</th><th class="num">Nicht verfügbar</th><th class="num">Ungeplant</th><th class="num">Geplant</th><th class="num">Δ 24 h</th><th class="num">Ungeplant Δ 24 h</th><th class="num">Aktive Meldungen</th><th>Quelle</th></tr></thead><tbody>` +
+    $('tZones').innerHTML = `<thead><tr><th>Zone</th><th class="num">Nicht verfügbar</th><th class="num">Ungeplant</th><th class="num">Geplant</th><th class="num">Δ 24 h</th><th class="num">Ungeplant Δ 24 h</th><th class="num">Aktive Meldungen</th><th>Daten</th></tr></thead><tbody>` +
       zoneOrder.map((z) => {
         const r = zones[z] || {};
-        const src = r.source ? esc(r.source) + (r.a77_plant_only_units ? ` <span class="muted">(+${r.a77_plant_only_units} Anlagen nur A77)</span>` : '') : '<span class="flag">keine Daten</span>';
-        return `<tr><td><b>${ZONE_NAMES[z]}</b></td><td class="num">${fmt(r.unavailable_mw)}</td><td class="num">${fmt(r.forced_mw)}</td><td class="num">${fmt(r.planned_mw)}</td><td class="num">${sgn(r.delta_24h_mw)}</td><td class="num">${sgn(r.forced_delta_24h_mw)}</td><td class="num">${fmt(r.active_events)}</td><td>${src}${r.complete === false ? ' <span class="flag">⚠ unvollständig</span>' : ''}</td></tr>`;
+        const what = r.source ? (String(r.source).includes('A77') ? 'Block- und Anlagenmeldungen' : 'Blockmeldungen')
+          + (r.a77_plant_only_units ? `, davon ${r.a77_plant_only_units} Anlagen ohne Blockmeldung` : '') : '';
+        const src = !r.source ? '<span class="flag">keine Daten</span>'
+          : r.complete === false ? `<span class="flag" title="${esc(what)}">⚠ unvollständig</span>` : `<span class="muted" title="${esc(what)}">✓ vollständig</span>`;
+        return `<tr><td><b>${ZONE_NAMES[z]}</b></td><td class="num">${fmt(r.unavailable_mw)}</td><td class="num">${fmt(r.forced_mw)}</td><td class="num">${fmt(r.planned_mw)}</td><td class="num">${sgn(r.delta_24h_mw)}</td><td class="num">${sgn(r.forced_delta_24h_mw)}</td><td class="num">${fmt(r.active_events)}</td><td>${src}</td></tr>`;
       }).join('') + '</tbody>';
 
     // All zones in one chart, like the table above. Fixed categorical order
     // (validated: adjacent pairs pass CVD/normal-vision in both themes);
     // direct labels at the line ends are the second channel besides colour.
     const zoneColors = { DE_LU: cssVar('--s1'), FR: cssVar('--s2'), NL: cssVar('--s3'), BE: cssVar('--s4') };
-    const outTraces = OUT_ZONES.map((zn) => line(d.series?.[zn], ZONE_NAMES[zn], zoneColors[zn], 'solid', 'y',
-      { legendrank: OUT_ZONES.indexOf(zn) }));
-    const ends = OUT_ZONES.map((zn) => ({ zn, p: (d.series?.[zn] || []).at(-1) })).filter((e) => e.p && isNum(e.p.v));
+    const outTraces = OUT_ZONES.map((zn) => line(d.series?.[zn], ZONE_NAMES[zn], zoneColors[zn]));
+    const hiddenZones = state.hidden.chOut || new Set();
+    const ends = OUT_ZONES.filter((zn) => !hiddenZones.has(ZONE_NAMES[zn]))
+      .map((zn) => ({ zn, p: (d.series?.[zn] || []).at(-1) })).filter((e) => e.p && isNum(e.p.v));
     const top = Math.max(1, ...ends.map((e) => e.p.v));
     const minGap = top * 0.09;  // keep end labels apart when zones sit close (e.g. NL/BE)
     const placed = ends.sort((a, b) => a.p.v - b.p.v).map((e) => ({ ...e, y: e.p.v }));
@@ -359,10 +419,10 @@
       x: utcX(e.p.t), y: e.y, xref: 'x', yref: 'y', xanchor: 'left', xshift: 6, showarrow: false,
       text: `<span style="color:${zoneColors[e.zn]}">■</span> ${ZONE_NAMES[e.zn]}`, font: { size: 11, color: cssVar('--text-2') },
     }));
+    head('chOut', 'Nicht verfügbare Leistung', 'MW', OUT_ZONES.map((zn) => lk(ZONE_NAMES[zn], zoneColors[zn])));
     plot('chOut', outTraces, baseLayout({
-      margin: { l: 56, r: 64, t: 28, b: 30 }, annotations: labels,
-      showlegend: !isNarrow($('chOut')),  // phones: the end labels alone name the lines
-      yaxis: Object.assign(baseLayout().yaxis, { title: { text: 'MW nicht verfügbar', font: { size: 10 } }, rangemode: 'tozero' }),
+      margin: { l: 56, r: 64, t: 12, b: 30 }, annotations: labels,
+      yaxis: Object.assign(baseLayout().yaxis, { rangemode: 'tozero' }),
     }));
 
     const typeLabel = (n) => (n.notice_type === 'forced' ? '<span class="flag">ungeplant</span>' : n.notice_type === 'planned' ? 'geplant' : 'unbekannt');
@@ -370,11 +430,14 @@
     const recent = d.recent || [];
     $('tRecent').innerHTML = recent.length
       ? `<thead><tr><th>Veröffentlicht</th><th>Zone</th><th>Anlage</th><th>Brennstoff</th><th class="num">MW</th><th>Art</th><th>Zeitraum</th><th>Status</th></tr></thead><tbody>` +
-        recent.map((n) => `<tr><td>${dayTime(n.published)}${n.revision > 1 ? ` <span class="muted">Rev. ${n.revision}</span>` : ''}</td><td>${ZONE_NAMES[n.zone] || esc(n.zone)}</td><td>${esc(n.plant)}</td><td>${esc(n.fuel || '')}</td><td class="num">${fmt(n.unavailable_mw)}</td><td>${typeLabel(n)}</td><td>${window_(n)}</td><td>${n.state === 'active' ? 'aktiv' : n.state === 'upcoming' ? 'kommt' : 'beendet'}</td></tr>`).join('') + '</tbody>'
+        recent.map((n) => `<tr><td>${dayTime(n.published)}${n.revision > 1 ? ` <span class="muted">Rev. ${n.revision}</span>` : ''}</td><td>${ZONE_NAMES[n.zone] || esc(n.zone)}</td><td>${esc(n.plant)}</td><td>${fuel(n.fuel)}</td><td class="num">${fmt(n.unavailable_mw)}</td><td>${typeLabel(n)}</td><td>${window_(n)}</td><td>${n.state === 'active' ? 'aktiv' : n.state === 'upcoming' ? 'kommt' : 'beendet'}</td></tr>`).join('') + '</tbody>'
       : '<tbody><tr><td class="muted">Keine neuen oder geänderten Meldungen in den letzten 24 h.</td></tr></tbody>';
     renderNotices();
-    const st = d.source_status || {};
-    $('srcOut').innerHTML = Object.entries(st).map(([zone, docs]) => Object.entries(docs).map(([doc, s]) => chip(`${ZONE_NAMES[zone] || zone} ${doc}: ${s}`, stateCls(s))).join('')).join('');
+    // Chips only for problems; the full status sits under "Quellen & Methodik".
+    const st = Object.entries(d.source_status || {}).flatMap(([zone, docs]) => Object.entries(docs).map(([doc, v]) => ({ zone, doc, v })));
+    const stText = (e) => `${ZONE_NAMES[e.zone] || e.zone} ${DOC_DE[e.doc] || e.doc}: ${STATE_DE[e.v] || e.v}`;
+    $('srcOut').innerHTML = st.filter((e) => stateCls(e.v) !== 'ok').map((e) => chip(stText(e), stateCls(e.v))).join('');
+    $('srcOutAll').textContent = st.map((e) => `${stateCls(e.v) === 'ok' ? '✓' : '!'} ${stText(e)}`).join(' · ');
   }
 
   function renderNotices() {
@@ -382,11 +445,11 @@
     if (!d) return;
     const fz = $('fZone').value, ft = $('fType').value, fs = $('fState').value, q = $('fText').value.trim().toLowerCase();
     const rows = (d.notices || []).filter((n) => (!fz || n.zone === fz) && (!ft || n.notice_type === ft) && (!fs || n.state === fs)
-      && (!q || `${n.plant} ${n.fuel} ${n.reason_text || ''}`.toLowerCase().includes(q)));
+      && (!q || `${n.plant} ${n.fuel} ${FUEL_DE[n.fuel] || ''} ${n.reason_text || ''}`.toLowerCase().includes(q)));
     $('fCount').textContent = `${rows.length} von ${(d.notices || []).length} Meldungen · MW je Meldung, bei Überlappung nicht addierbar`;
     const durLabel = { bounded: '< 30 Tage', long_term: '≥ 30 Tage', open_ended: 'offen', unknown: '?' };
     $('tNotices').innerHTML = `<thead><tr><th>Status</th><th>Zone</th><th>Anlage</th><th>Brennstoff</th><th class="num">MW</th><th class="num">Nenn-MW</th><th>Art</th><th>Dauer</th><th>Zeitraum</th><th>Veröffentlicht</th><th>Grund</th></tr></thead><tbody>` +
-      rows.slice(0, 500).map((n) => `<tr><td>${n.state === 'active' ? 'aktiv' : n.state === 'upcoming' ? 'kommt' : 'beendet'}</td><td>${ZONE_NAMES[n.zone] || esc(n.zone)}</td><td>${esc(n.plant)}</td><td>${esc(n.fuel || '')}</td><td class="num">${fmt(n.unavailable_mw)}</td><td class="num">${fmt(n.nominal_mw)}</td><td>${n.notice_type === 'forced' ? '<span class="flag">ungeplant</span>' : n.notice_type === 'planned' ? 'geplant' : '?'}</td><td>${durLabel[n.duration_class] || ''}</td><td>${dayTime(n.event_start)} – ${n.duration_class === 'open_ended' ? 'offen' : dayTime(n.event_end)}</td><td>${dayTime(n.published)}</td><td class="wrapcell">${esc(n.reason_text || '')}</td></tr>`).join('') + '</tbody>';
+      rows.slice(0, 500).map((n) => `<tr><td>${n.state === 'active' ? 'aktiv' : n.state === 'upcoming' ? 'kommt' : 'beendet'}</td><td>${ZONE_NAMES[n.zone] || esc(n.zone)}</td><td>${esc(n.plant)}</td><td>${fuel(n.fuel)}</td><td class="num">${fmt(n.unavailable_mw)}</td><td class="num">${fmt(n.nominal_mw)}</td><td>${n.notice_type === 'forced' ? '<span class="flag">ungeplant</span>' : n.notice_type === 'planned' ? 'geplant' : '?'}</td><td>${durLabel[n.duration_class] || ''}</td><td>${dayTime(n.event_start)} – ${n.duration_class === 'open_ended' ? 'offen' : dayTime(n.event_end)}</td><td>${dayTime(n.published)}</td><td class="wrapcell">${esc(n.reason_text || '')}</td></tr>`).join('') + '</tbody>';
   }
 
   // German names for the balancing sources (API labels are English).
@@ -424,47 +487,35 @@
     const toMw = (pts) => (pts || []).map((q) => ({ t: q.t, v: isNum(q.v) ? q.v * 4 : q.v }));
     const nowcast = toMw(s['Net imbalance volume nowcast']);
     const prelimSet = new Set(nowcast.map((q) => q.t));
-    const traces = bars([...toMw(s['Net imbalance volume']), ...nowcast], 'System', 'y', 'MW', ['lang', 'kurz'], prelimSet)
-      .map((t, i) => Object.assign(t, { name: i === 0 ? 'System lang' : 'System kurz' }));
+    const bal = bars([...toMw(s['Net imbalance volume']), ...nowcast], 'y', 'MW', ['lang', 'kurz'], prelimSet);
     const euro = { hovertemplate: '%{y:,.2f} €/MWh' };
-    if (single) traces.push(line(s['Imbalance price'], 'reBAP', cssVar('--s2'), 'solid', 'y2', euro));
-    else traces.push(line(s['Imbalance price long'], 'Preis lang', cssVar('--s2'), 'solid', 'y2', euro), line(s['Imbalance price short'], 'Preis kurz', cssVar('--s4'), 'dash', 'y2', euro));
+    const cP = cssVar('--s2'), cA = cssVar('--s3'), cM = cssVar('--s4'), cN = cssVar('--text-2');
+    const priceKeys = single ? [] : [lk('Preis lang', cP), lk('Preis kurz', cM, 'dash')];
+    const priceTr = single ? [line(s['Imbalance price'], 'reBAP', cP, 'solid', 'y', euro)]
+      : priceKeys.map((k, i) => line(s[i ? 'Imbalance price short' : 'Imbalance price long'], k.name, k.color, k.dash, 'y', euro));
+    // Regelenergie: need (NRV-Saldo) and what was activated (aFRR, mFRR);
+    // all three share the German sign: + = Unterdeckung, hochregeln.
     const without = deSeries ? '' : ` (ohne ${missing || '—'})`;
     const mfrrPts = (s['mFRR net DE'] || []).length ? s['mFRR net DE'] : s['mFRR net partial'];
-    const mfrrActive = (mfrrPts || []).some((q) => isNum(q.v) && q.v !== 0);  // mFRR is rare; no flat zero line
-    traces.push(line(deSeries ? s['aFRR net DE'] : s['aFRR net partial'], `aFRR${without}`, cssVar('--s3'), 'solid', 'y3'));
-    if (mfrrActive) traces.push(line(mfrrPts, `mFRR${without}`, cssVar('--s4'), 'solid', 'y3'));
+    const regKeys = [lk('NRV-Saldo', cN, 'dot'), lk(`aFRR${without}`, cA), lk(`mFRR${without}`, cM)];
+    const reg = [s['NRV-Saldo'], deSeries ? s['aFRR net DE'] : s['aFRR net partial'], mfrrPts]
+      .map((pts, i) => line(pts, regKeys[i].name, regKeys[i].color, regKeys[i].dash));
+    const range = xRange(bal, priceTr, reg);
 
-    // Each subplot names itself (no legend): title, unit, colour keys.
-    const sp = ' ';
-    const box = (c, t) => `<span style="color:${c}">■</span> ${t}`;
-    const dash = (c, t) => `<span style="color:${c}">━</span> ${t}`;
-    const head = (axis, text) => ({ xref: 'paper', x: 0, xshift: -48, yref: `${axis} domain`, y: 1, yanchor: 'bottom', yshift: 3,
-      xanchor: 'left', align: 'left', showarrow: false, text, font: { size: 11, color: cssVar('--text-2') } });
-    const annotations = [
-      head('y', `<b>Systembilanz</b> MW${sp}${box(cssVar('--pos'), '+ lang')}${sp}${box(cssVar('--neg'), '− kurz')}`),
-      head('y2', single ? `<b>reBAP</b> €/MWh${prelim ? `${sp}<span style="color:${cssVar('--muted')}">Schätzung, Abrechnung folgt</span>` : ''}`
-        : `<b>Ausgleichsenergiepreis</b> €/MWh${sp}${dash(cssVar('--s2'), 'lang')}${sp}${dash(cssVar('--s4'), 'kurz')}`),
-      head('y3', `<b>Regelenergie</b> MW, + = hoch${sp}${dash(cssVar('--s3'), 'aFRR')}${mfrrActive ? sp + dash(cssVar('--s4'), 'mFRR') : ''}`),
-    ];
     const shapes = [];
     if (nowcast.length) {
-      // Preliminary quarter-hours: a quiet band behind the pale bars.
+      // Preliminary quarter-hours: a quiet band behind the lighter bars.
       const x0 = Date.parse(nowcast[0].t) - 450e3, x1 = Date.parse(nowcast.at(-1).t) + 450e3;
-      shapes.push({ type: 'rect', layer: 'below', xref: 'x', yref: 'y domain', x0: utcX(x0), x1: utcX(x1), y0: 0, y1: 1,
-        fillcolor: cssVar('--line-soft'), opacity: 0.6, line: { width: 0 } });
-      annotations.push({ xref: 'x', x: utcX((x0 + x1) / 2), yref: 'y domain', y: 1, yanchor: 'bottom', yshift: 3, showarrow: false,
-        text: 'vorläufig', font: { size: 10, color: cssVar('--muted') } });
+      shapes.push({ type: 'rect', layer: 'below', xref: 'x', yref: 'paper', x0: utcX(x0), x1: utcX(x1), y0: 0, y1: 1,
+        fillcolor: cssVar('--line-soft'), opacity: 0.8, line: { width: 0 } });
     }
-    const L = baseLayout();
-    plot('chSys', traces, baseLayout({
-      showlegend: false, annotations, shapes, bargap: 0.15,
-      margin: { l: 56, r: 12, t: 24, b: 30 },
-      xaxis: Object.assign(L.xaxis, { anchor: 'y3' }),
-      yaxis: Object.assign({}, L.yaxis, { domain: [0.66, 1] }),
-      yaxis2: Object.assign({}, L.yaxis, { domain: [0.35, 0.57] }),
-      yaxis3: Object.assign({}, L.yaxis, { domain: [0, 0.26] }),
-    }));
+    head('chSys', 'Systembilanz', 'MW · + lang, − kurz', [bk('lang', cssVar('--pos')), bk('kurz', cssVar('--neg')),
+      ...(nowcast.length ? [bk('vorläufig', cssVar('--muted'), 0.35)] : [])]);
+    plot('chSys', bal, baseLayout({ shapes, bargap: 0.15 }), { xLabels: false, range });
+    head('chRebap', single ? 'reBAP' : 'Ausgleichsenergiepreis', `€/MWh${prelim ? ' · Schätzung der Netzbetreiber, Abrechnung folgt' : ''}`, priceKeys);
+    plot('chRebap', priceTr, baseLayout(), { xLabels: false, range });
+    head('chReg', 'Regelenergie', 'MW · + = hochregeln (System kurz)', regKeys.filter((k, i) => (reg[i].x || []).length));
+    plot('chReg', reg, baseLayout(), { range });
 
     const stateShort = short ? 'kurz' : long ? 'lang' : nowState === 'balanced' ? 'ausgeglichen' : '—';
     $('mSys').innerHTML = [
@@ -485,6 +536,8 @@
   }
 
   const RENDER = { renewables: renderRes, load: renderLoad, borders: renderFlow, outages: renderOut, balancing: renderSys };
+  const CHART_OWNER = { chRes: 'renewables', chResDiff: 'renewables', chLoad: 'load', chLoadDiff: 'load', chFlow: 'borders',
+    chOut: 'outages', chSys: 'balancing', chRebap: 'balancing', chReg: 'balancing' };
 
   // ---------- data loading ----------
   async function getJSON(url, ms = 150000) {
@@ -615,10 +668,18 @@
     $('year').textContent = new Date().toLocaleDateString('de-DE', { year: 'numeric', timeZone: 'Europe/Berlin' });
     $('day').value = todayBerlin();
     $('day').max = new Date(Date.now() + 2 * 864e5).toLocaleDateString('sv-SE', { timeZone: 'Europe/Berlin' });
-    $('day').addEventListener('change', () => { $('flowBorder').length = 1; loadAll(); });
-    $('today').addEventListener('click', () => { $('day').value = todayBerlin(); loadAll(); });
+    $('day').addEventListener('change', () => { $('flowBorder').length = 1; state.zoom = {}; loadAll(); });
+    $('today').addEventListener('click', () => { $('day').value = todayBerlin(); state.zoom = {}; loadAll(); });
     $('refresh').addEventListener('click', loadAll);
     $('flowBorder').addEventListener('change', renderFlow);
+    // Key in a chart head: show / hide that series (kept across refreshes).
+    document.addEventListener('click', (ev) => {
+      const b = ev.target.closest('button.key[data-chart]');
+      if (!b) return;
+      const set = (state.hidden[b.dataset.chart] ||= new Set());
+      if (!set.delete(b.dataset.name)) set.add(b.dataset.name);
+      RENDER[CHART_OWNER[b.dataset.chart]]?.();
+    });
     ['fZone', 'fType', 'fState'].forEach((id) => $(id).addEventListener('change', renderNotices));
     $('fText').addEventListener('input', renderNotices);
     segment('resTech', 'resTech', renderRes);

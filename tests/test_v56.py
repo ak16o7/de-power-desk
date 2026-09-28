@@ -45,14 +45,14 @@ class SystembilanzPanelTests(unittest.TestCase):
         a = self.js.index('function renderSys()')
         return self.js[a:self.js.index('const RENDER =', a)]
 
-    def test_one_unit_and_no_duplicate_nrv_line(self):
+    def test_one_unit_and_nrv_only_in_the_regelenergie_chart(self):
         f = self.render_sys()
         self.assertIn('q.v * 4', f)                           # A86 MWh per 15 min -> MW
-        self.assertNotIn("s['NRV-Saldo']", f)                 # same quantity as the bars
         self.assertNotIn('(MWh)', f)
-        self.assertIn('showlegend: false', f)
-        for head in ('<b>Systembilanz</b> MW', '<b>reBAP</b> €/MWh', '<b>Regelenergie</b> MW, + = hoch'):
-            self.assertIn(head, f)
+        # v5.7: NRV-Saldo is back, next to aFRR/mFRR (same German sign: + = hochregeln)
+        self.assertIn("lk('NRV-Saldo', cN, 'dot')", f)
+        self.assertIn("head('chSys', 'Systembilanz', 'MW · + lang, − kurz'", f)
+        self.assertIn("head('chReg', 'Regelenergie', 'MW · + = hochregeln (System kurz)'", f)
 
     def test_description_is_short_and_methodology_folded(self):
         p = re.search(r'<h2>Systembilanz, reBAP &amp; Regelenergie</h2><p>(.*?)</p>', self.html).group(1)
