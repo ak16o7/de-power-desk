@@ -9,65 +9,69 @@
   <link rel="icon" href="/static/favicon-32.png?v=1" sizes="32x32" type="image/png" />
   <link rel="apple-touch-icon" href="/static/apple-touch-icon.png?v=1" />
   <meta name="theme-color" content="#111110" />
-  <script>/* apply a stored theme before first paint (no flash) */try{var t=localStorage.getItem('dpd-theme');document.documentElement.dataset.theme=(t==='light'||t==='dark')?t:(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark');}catch(e){}</script>
-  <link rel="stylesheet" href="/static/style.css?v=5.7.1" />
+  <!-- Stored theme and language before first paint (no flash). Language: stored
+       choice, else the browser language (German -> de, anything else -> en). -->
+  <script>try{var d=document.documentElement,t=localStorage.getItem('dpd-theme'),l=localStorage.getItem('dpd-lang');d.dataset.theme=(t==='light'||t==='dark')?t:(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark');d.lang=(l==='de'||l==='en')?l:(/^de\b/i.test(navigator.language||'de')?'de':'en');}catch(e){}</script>
+  <link rel="stylesheet" href="/static/style.css?v=5.8.0" />
   <script src="/static/plotly.min.js?v=3.3.1"></script>
 </head>
 <body data-refresh="__REFRESH_SECONDS__">
 <header class="top">
   <div class="wrap">
-    <div class="brand"><h1>DE Power Desk</h1><span>Deutscher Strommarkt · Zeiten Berlin</span></div>
-    <div class="status" id="status" aria-live="polite"><span class="dot" id="statusDot"></span><span id="statusText">lädt…</span><span class="detail" id="statusDetail"></span></div>
-    <span class="chip warn hidden" id="authChip" title="DASHBOARD_USERNAME/PASSWORD in Render setzen"><span class="ico">!</span>Öffentlich ohne Login</span>
+    <div class="brand"><h1>DE Power Desk</h1><span><span data-lang="de">Deutscher Strommarkt · Zeiten Berlin</span><span data-lang="en">German power market · Berlin time</span></span></div>
+    <div class="status" id="status" aria-live="polite"><span class="dot" id="statusDot"></span><span id="statusText">…</span><span class="detail" id="statusDetail"></span></div>
+    <button class="btn icon lang js-lang mobile-only" type="button" aria-label="Switch to English" title="Switch to English" data-en-aria="Auf Deutsch umschalten" data-en-title="Auf Deutsch umschalten"><span data-lang="de">EN</span><span data-lang="en">DE</span></button>
+    <span class="chip warn hidden" id="authChip" title="DASHBOARD_USERNAME/PASSWORD in Render setzen" data-en-title="Set DASHBOARD_USERNAME/PASSWORD in Render"><span class="ico">!</span><span data-lang="de">Öffentlich ohne Login</span><span data-lang="en">Public, no login</span></span>
     <div class="controls">
-      <input type="date" id="day" aria-label="Liefertag" />
-      <button class="btn" id="today">Heute</button>
-      <label class="toggle" title="Live: Seite holt neue Daten automatisch"><input type="checkbox" id="auto" checked /> Live</label>
-      <button class="btn icon" id="refresh" type="button" aria-label="Jetzt neu laden" title="Jetzt neu laden">
+      <input type="date" id="day" aria-label="Liefertag" data-en-aria="Delivery day" />
+      <button class="btn" id="today"><span data-lang="de">Heute</span><span data-lang="en">Today</span></button>
+      <label class="toggle" title="Live: Seite holt neue Daten automatisch" data-en-title="Live: the page fetches new data automatically"><input type="checkbox" id="auto" checked /> Live</label>
+      <button class="btn icon" id="refresh" type="button" aria-label="Jetzt neu laden" title="Jetzt neu laden" data-en-aria="Reload now" data-en-title="Reload now">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg>
       </button>
       <button class="btn icon" id="theme" type="button" aria-label="Design umschalten">
         <svg class="theme-dark-only" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
         <svg class="theme-light-only" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
       </button>
+      <button class="btn icon lang js-lang desktop-only" id="lang" type="button" aria-label="Switch to English" title="Switch to English" data-en-aria="Auf Deutsch umschalten" data-en-title="Auf Deutsch umschalten"><span data-lang="de">EN</span><span data-lang="en">DE</span></button>
     </div>
   </div>
 </header>
 
 <main class="wrap">
-  <section class="signals" aria-label="Signale">
+  <section class="signals" aria-label="Signale" data-en-aria="Signals">
     <article class="sig" id="sigRes">
-      <div class="sig-head"><span class="sig-label">EE-Ist vs. DA-Prognose</span><span class="tag" data-tag></span></div>
+      <div class="sig-head"><span class="sig-label"><span data-lang="de">EE-Ist vs. DA-Prognose</span><span data-lang="en">RES actual vs. DA forecast</span></span><span class="tag" data-tag></span></div>
       <div class="sig-value" data-value>—</div>
       <div class="sig-sub" data-sub></div>
       <div class="sig-foot" data-foot></div>
     </article>
     <article class="sig" id="sigRev">
-      <div class="sig-head"><span class="sig-label">EE-Revision nächste 4 h</span><span class="tag" data-tag></span></div>
+      <div class="sig-head"><span class="sig-label"><span data-lang="de">EE-Revision nächste 4 h</span><span data-lang="en">RES revision next 4 h</span></span><span class="tag" data-tag></span></div>
       <div class="sig-value" data-value>—</div>
       <div class="sig-sub" data-sub></div>
       <div class="sig-foot" data-foot></div>
     </article>
     <article class="sig" id="sigResid">
-      <div class="sig-head"><span class="sig-label">Residuallast vs. DA</span><span class="tag" data-tag></span></div>
+      <div class="sig-head"><span class="sig-label"><span data-lang="de">Residuallast vs. DA</span><span data-lang="en">Residual load vs. DA</span></span><span class="tag" data-tag></span></div>
       <div class="sig-value" data-value>—</div>
       <div class="sig-sub" data-sub></div>
       <div class="sig-foot" data-foot></div>
     </article>
     <article class="sig" id="sigFlow">
-      <div class="sig-head"><span class="sig-label">Netto-Import physisch</span><span class="tag" data-tag></span></div>
+      <div class="sig-head"><span class="sig-label"><span data-lang="de">Netto-Import physisch</span><span data-lang="en">Physical net import</span></span><span class="tag" data-tag></span></div>
       <div class="sig-value" data-value>—</div>
       <div class="sig-sub" data-sub></div>
       <div class="sig-foot" data-foot></div>
     </article>
     <article class="sig" id="sigOut">
-      <div class="sig-head"><span class="sig-label">Kraftwerke DE nicht verfügbar</span><span class="tag" data-tag></span></div>
+      <div class="sig-head"><span class="sig-label"><span data-lang="de">Kraftwerke DE nicht verfügbar</span><span data-lang="en">DE plants unavailable</span></span><span class="tag" data-tag></span></div>
       <div class="sig-value" data-value>—</div>
       <div class="sig-sub" data-sub></div>
       <div class="sig-foot" data-foot></div>
     </article>
     <article class="sig" id="sigSys">
-      <div class="sig-head"><span class="sig-label">Systembilanz / reBAP</span><span class="tag" data-tag></span></div>
+      <div class="sig-head"><span class="sig-label"><span data-lang="de">Systembilanz / reBAP</span><span data-lang="en">System balance / reBAP</span></span><span class="tag" data-tag></span></div>
       <div class="sig-value" data-value>—</div>
       <div class="sig-sub" data-sub></div>
       <div class="sig-foot" data-foot></div>
@@ -77,56 +81,81 @@
   <section class="grid">
     <article class="panel" id="pRes">
       <div class="panel-head">
-        <div><h2>Erneuerbare: Ist vs. Prognosen</h2><p>Wind- und Solareinspeisung gegen die Prognosen. Die Balken zeigen, wie weit das Ist von der Day-Ahead-Prognose abweicht.</p></div>
-        <div class="panel-tools"><div class="seg" id="resTech" role="group" aria-label="Technologie">
-          <button aria-pressed="true" data-v="RES">Gesamt</button><button aria-pressed="false" data-v="Solar">Solar</button><button aria-pressed="false" data-v="Wind Onshore">Onshore</button><button aria-pressed="false" data-v="Wind Offshore">Offshore</button>
+        <div>
+          <h2><span data-lang="de">Erneuerbare: Ist vs. Prognosen</span><span data-lang="en">Renewables: actual vs. forecasts</span></h2>
+          <p><span data-lang="de">Wind- und Solareinspeisung gegen die Prognosen. Die Balken zeigen, wie weit das Ist von der Day-Ahead-Prognose abweicht.</span><span data-lang="en">Wind and solar output against the forecasts. The bars show how far the actual deviates from the day-ahead forecast.</span></p>
+        </div>
+        <div class="panel-tools"><div class="seg" id="resTech" role="group" aria-label="Technologie" data-en-aria="Technology">
+          <button aria-pressed="true" data-v="RES"><span data-lang="de">Gesamt</span><span data-lang="en">Total</span></button><button aria-pressed="false" data-v="Solar">Solar</button><button aria-pressed="false" data-v="Wind Onshore">Onshore</button><button aria-pressed="false" data-v="Wind Offshore">Offshore</button>
         </div></div>
       </div>
       <div class="chead"></div><div class="chart" id="chRes"></div>
       <div class="chead"></div><div class="chart" id="chResDiff"></div>
       <div class="metrics" id="mRes"></div>
       <details class="method">
-        <summary>Quellen &amp; Methodik</summary>
-        <ul>
+        <summary><span data-lang="de">Quellen &amp; Methodik</span><span data-lang="en">Sources &amp; methodology</span></summary>
+        <ul data-lang="de">
           <li><b>Ist:</b> tatsächliche Erzeugung je Viertelstunde (ENTSO-E A75). Die jüngsten Werte sind Hochrechnungen der Netzbetreiber und werden später durch Messwerte ersetzt; die Kachel oben zeigt deshalb auch den Stundenschnitt.</li>
           <li><b>Day-Ahead:</b> Prognose vom Vortag, 18:00 (ENTSO-E A69, Prozess A01) – das, was die Day-Ahead-Auktion eingepreist hat.</li>
           <li><b>Intraday 08:00:</b> Prognosestand am Liefertag um 08:00 (A69, A40).</li>
           <li><b>Laufend:</b> jüngste Prognose (A69, A18). Aus ihr kommt die Revision für die nächsten vier Stunden.</li>
+        </ul>
+        <ul data-lang="en">
+          <li><b>Actual:</b> generation per quarter-hour (ENTSO-E A75). The latest values are TSO extrapolations that are later replaced by metered data, which is why the tile above also shows the 1-hour mean.</li>
+          <li><b>Day-ahead:</b> forecast of the previous day, 18:00 (ENTSO-E A69, process A01) – what the day-ahead auction priced in.</li>
+          <li><b>Intraday 08:00:</b> forecast as of 08:00 on the delivery day (A69, A40).</li>
+          <li><b>Latest:</b> most recent forecast (A69, A18). The revision for the next four hours is based on it.</li>
         </ul>
       </details>
     </article>
 
     <article class="panel" id="pLoad">
       <div class="panel-head">
-        <div><h2>Last &amp; Residuallast</h2><p>Stromverbrauch und Residuallast (Last minus Wind und Solar) gegen die Day-Ahead-Prognose.</p></div>
+        <div>
+          <h2><span data-lang="de">Last &amp; Residuallast</span><span data-lang="en">Load &amp; residual load</span></h2>
+          <p><span data-lang="de">Stromverbrauch und Residuallast (Last minus Wind und Solar) gegen die Day-Ahead-Prognose.</span><span data-lang="en">Power consumption and residual load (load minus wind and solar) against the day-ahead forecast.</span></p>
+        </div>
       </div>
       <div class="chead"></div><div class="chart" id="chLoad"></div>
       <div class="chead"></div><div class="chart" id="chLoadDiff"></div>
       <div class="metrics" id="mLoad"></div>
       <details class="method">
-        <summary>Quellen &amp; Methodik</summary>
-        <ul>
+        <summary><span data-lang="de">Quellen &amp; Methodik</span><span data-lang="en">Sources &amp; methodology</span></summary>
+        <ul data-lang="de">
           <li><b>Last:</b> Ist und Day-Ahead-Prognose (ENTSO-E A65).</li>
           <li><b>Residuallast</b> = Last − Solar − Wind. Das Ist entsteht aus den Ist-Werten, die Prognose aus den Day-Ahead-Prognosen (A65, A69). Verglichen wird immer Day-Ahead mit Day-Ahead.</li>
           <li><b>Balken:</b> Residuallast Ist − Day-Ahead. Positiv heißt: Konventionelle Kraftwerke und Importe mussten mehr liefern als eingeplant.</li>
+        </ul>
+        <ul data-lang="en">
+          <li><b>Load:</b> actual and day-ahead forecast (ENTSO-E A65).</li>
+          <li><b>Residual load</b> = load − solar − wind. The actual is built from actual values, the forecast from the day-ahead forecasts (A65, A69). Day-ahead is always compared with day-ahead.</li>
+          <li><b>Bars:</b> residual load actual − day-ahead. Positive means conventional plants and imports had to supply more than planned.</li>
         </ul>
       </details>
     </article>
 
     <article class="panel wide" id="pFlow">
       <div class="panel-head">
-        <div><h2>Grenzflüsse DE-LU</h2><p>Physikalische Flüsse gegen die Handelsfahrpläne, als Summe oder je Grenze. Positiv heißt Import nach DE-LU.</p></div>
-        <div class="panel-tools"><select id="flowBorder" aria-label="Grenze"><option value="TOTAL">Summe alle Grenzen</option></select></div>
+        <div>
+          <h2><span data-lang="de">Grenzflüsse DE-LU</span><span data-lang="en">Cross-border flows DE-LU</span></h2>
+          <p><span data-lang="de">Physikalische Flüsse gegen die Handelsfahrpläne, als Summe oder je Grenze. Positiv heißt Import nach DE-LU.</span><span data-lang="en">Physical flows against the commercial schedules, in total or per border. Positive means import into DE-LU.</span></p>
+        </div>
+        <div class="panel-tools"><select id="flowBorder" aria-label="Grenze" data-en-aria="Border"><option value="TOTAL" data-en="All borders">Summe alle Grenzen</option></select></div>
       </div>
       <div class="chead"></div><div class="chart" id="chFlow"></div>
       <div class="tablewrap"><table id="tFlow"></table></div>
       <div class="sources" id="srcFlow"></div>
       <details class="method">
-        <summary>Quellen &amp; Methodik</summary>
-        <ul>
+        <summary><span data-lang="de">Quellen &amp; Methodik</span><span data-lang="en">Sources &amp; methodology</span></summary>
+        <ul data-lang="de">
           <li><b>Physisch:</b> gemessene Flüsse an den Grenzkuppelstellen (ENTSO-E A11).</li>
           <li><b>Day-Ahead-Fahrplan:</b> in der Day-Ahead-Auktion vereinbarte Austausche (A09, Vertragsart A01). <b>Gesamtfahrplan:</b> einschließlich Intraday-Handel (A09, A05). Intraday = Gesamt − Day-Ahead.</li>
           <li><b>Phys. − Fahrplan:</b> alles, was Fahrpläne nicht enthalten – Redispatch und Countertrading, Regelenergie-Austausch, Nothilfe, ungewollte Abweichungen. Je Grenze sind das vor allem Ring- und Transitflüsse; an den Core-Grenzen ist der Fahrplan nur eine rechnerische Zerlegung der Nettopositionen. In der Summe heben sich Ringflüsse auf. Kontext, kein Handelssignal.</li>
+        </ul>
+        <ul data-lang="en">
+          <li><b>Physical:</b> metered flows on the interconnectors (ENTSO-E A11).</li>
+          <li><b>Day-ahead schedule:</b> exchanges agreed in the day-ahead auction (A09, contract type A01). <b>Total schedule:</b> including intraday trading (A09, A05). Intraday = total − day-ahead.</li>
+          <li><b>Phys. − schedule:</b> everything schedules do not contain – redispatch and countertrading, balancing exchange, emergency assistance, unintended deviations. Per border this is mostly loop and transit flow; on Core borders the schedule is only an arithmetic split of the net positions. In the total, loop flows cancel out. Context, not a trading signal.</li>
         </ul>
         <p class="muted" id="srcFlowAll"></p>
       </details>
@@ -134,30 +163,38 @@
 
     <article class="panel wide" id="pOut">
       <div class="panel-head">
-        <div><h2>Kraftwerksverfügbarkeit</h2><p>Nicht verfügbare Kraftwerksleistung laut Marktmeldungen (REMIT), Deutschland und Nachbarn.</p></div>
+        <div>
+          <h2><span data-lang="de">Kraftwerksverfügbarkeit</span><span data-lang="en">Power plant availability</span></h2>
+          <p><span data-lang="de">Nicht verfügbare Kraftwerksleistung laut Marktmeldungen (REMIT), Deutschland und Nachbarn.</span><span data-lang="en">Unavailable generation capacity from market notices (REMIT), Germany and neighbours.</span></p>
+        </div>
       </div>
       <div class="tablewrap"><table id="tZones"></table></div>
       <div class="chead"></div><div class="chart" id="chOut"></div>
-      <h3 class="subhead">Neu oder geändert in den letzten 24 h</h3>
+      <h3 class="subhead"><span data-lang="de">Neu oder geändert in den letzten 24 h</span><span data-lang="en">New or updated in the last 24 h</span></h3>
       <div class="tablewrap scroll" id="recentWrap"><table id="tRecent"></table></div>
       <details class="method" id="allNotices">
-        <summary>Alle Meldungen des Tages</summary>
+        <summary><span data-lang="de">Alle Meldungen des Tages</span><span data-lang="en">All notices of the day</span></summary>
         <div class="filters">
-          <select id="fZone" aria-label="Zone"><option value="">Alle Zonen</option><option value="DE_LU">DE-LU</option><option value="FR">FR</option><option value="NL">NL</option><option value="BE">BE</option></select>
-          <select id="fType" aria-label="Art"><option value="">Geplant + ungeplant</option><option value="forced">Nur ungeplant</option><option value="planned">Nur geplant</option></select>
-          <select id="fState" aria-label="Status"><option value="">Alle Status</option><option value="active">Aktiv</option><option value="upcoming">Beginnt heute</option><option value="ended">Beendet</option></select>
-          <input type="search" id="fText" placeholder="Anlage / Brennstoff suchen" />
+          <select id="fZone" aria-label="Zone"><option value="" data-en="All zones">Alle Zonen</option><option value="DE_LU">DE-LU</option><option value="FR">FR</option><option value="NL">NL</option><option value="BE">BE</option></select>
+          <select id="fType" aria-label="Art" data-en-aria="Type"><option value="" data-en="Planned + unplanned">Geplant + ungeplant</option><option value="forced" data-en="Unplanned only">Nur ungeplant</option><option value="planned" data-en="Planned only">Nur geplant</option></select>
+          <select id="fState" aria-label="Status"><option value="" data-en="All states">Alle Status</option><option value="active" data-en="Active">Aktiv</option><option value="upcoming" data-en="Starts today">Beginnt heute</option><option value="ended" data-en="Ended">Beendet</option></select>
+          <input type="search" id="fText" placeholder="Anlage / Brennstoff suchen" data-en-ph="Search plant / fuel" />
           <span class="count" id="fCount"></span>
         </div>
         <div class="tablewrap scroll"><table id="tNotices"></table></div>
       </details>
       <div class="sources" id="srcOut"></div>
       <details class="method">
-        <summary>Quellen &amp; Methodik</summary>
-        <ul>
+        <summary><span data-lang="de">Quellen &amp; Methodik</span><span data-lang="en">Sources &amp; methodology</span></summary>
+        <ul data-lang="de">
           <li><b>Quelle:</b> ENTSO-E, Nichtverfügbarkeit von Erzeugungseinheiten (Transparenzverordnung, Art. 15.1): Blockmeldungen (A80) plus Anlagenmeldungen ohne eigene Blockmeldung (A77, etwa Windparks).</li>
           <li><b>Zählweise:</b> Pro Einheit zählt die größte gleichzeitig gemeldete Einschränkung, damit überlappende Meldungen nicht doppelt zählen. Geplant oder ungeplant laut Meldung.</li>
           <li><b>Δ 24 h:</b> Stand jetzt gegen denselben Zeitpunkt gestern.</li>
+        </ul>
+        <ul data-lang="en">
+          <li><b>Source:</b> ENTSO-E, unavailability of generation units (Transparency Regulation, Art. 15.1): unit notices (A80) plus plant notices without a unit notice of their own (A77, e.g. wind farms).</li>
+          <li><b>Counting:</b> per unit, the largest simultaneously reported reduction counts, so overlapping notices are not counted twice. Planned or unplanned as stated in the notice.</li>
+          <li><b>Δ 24 h:</b> now versus the same time yesterday.</li>
         </ul>
         <p class="muted" id="srcOutAll"></p>
       </details>
@@ -165,7 +202,10 @@
 
     <article class="panel wide" id="pSys">
       <div class="panel-head">
-        <div><h2>Systembilanz, reBAP &amp; Regelenergie</h2><p>Deutschland gesamt, je Viertelstunde. Die jüngsten Balken sind vorläufig, bis der offizielle ENTSO-E-Wert vorliegt.</p></div>
+        <div>
+          <h2><span data-lang="de">Systembilanz, reBAP &amp; Regelenergie</span><span data-lang="en">System balance, reBAP &amp; balancing energy</span></h2>
+          <p><span data-lang="de">Deutschland gesamt, je Viertelstunde. Die jüngsten Balken sind vorläufig, bis der offizielle ENTSO-E-Wert vorliegt.</span><span data-lang="en">Germany as a whole, per quarter-hour. The latest bars are preliminary until the official ENTSO-E value is published.</span></p>
+        </div>
       </div>
       <div class="chead"></div><div class="chart" id="chSys"></div>
       <div class="chead"></div><div class="chart" id="chRebap"></div>
@@ -173,13 +213,20 @@
       <div class="metrics" id="mSys"></div>
       <div class="sources" id="srcSys"></div>
       <details class="method" id="methSys">
-        <summary>Quellen &amp; Methodik</summary>
-        <ul>
+        <summary><span data-lang="de">Quellen &amp; Methodik</span><span data-lang="en">Sources &amp; methodology</span></summary>
+        <ul data-lang="de">
           <li><b>Systembilanz:</b> Summe der vier deutschen Regelzonen aus ENTSO-E (A86), als mittlere Leistung je Viertelstunde (MWh × 4). Plus = System lang (Überdeckung), minus = System kurz (Unterdeckung).</li>
           <li><b>Vorläufig:</b> Vollständig liegt die ENTSO-E-Summe im Median rund 30 Minuten nach Ende der Viertelstunde vor, an manchen Abenden erst nach über einer Stunde. Bis dahin kommen die fehlenden Regelzonen aus dem RZ-Saldo der Netzbetreiber auf netztransparenz.de (rund 15 Minuten), notfalls aus dem NRV-Saldo. Es ist dieselbe Größe: Im Abgleich 26.–28.09.2026 (267 Viertelstunden) wichen 262 höchstens 10 MW vom offiziellen Wert ab, meist 0 MW; fünf (Amprion) um 100–170 MW. Der offizielle Wert ersetzt den vorläufigen automatisch.</li>
           <li><b>reBAP:</b> am selben Tag der Schätzer der Netzbetreiber (AEP-Schätzer). ENTSO-E (A85) veröffentlicht exakt dieselben Werte, zeitweise aber bis zu einer Stunde später; die jüngsten Viertelstunden kommen deshalb direkt von netztransparenz.de. Der abgerechnete Preis folgt Tage bis Wochen später.</li>
           <li><b>NRV-Saldo:</b> Saldo des deutschen Netzregelverbunds, also der gesamte Regelbedarf (positiv = Unterdeckung, es muss hochgeregelt werden). Er entspricht der Systembilanz mit umgekehrtem Vorzeichen.</li>
           <li><b>aFRR / mFRR:</b> tatsächlich aktivierte Regelenergie, Hochregeln minus Tiefregeln, für ganz Deutschland von netztransparenz.de. Ohne Zugang dort aus ENTSO-E, wo Amprion fehlt.</li>
+        </ul>
+        <ul data-lang="en">
+          <li><b>System balance:</b> sum of the four German control areas from ENTSO-E (A86), as mean power per quarter-hour (MWh × 4). Plus = system long (surplus), minus = system short (deficit).</li>
+          <li><b>Preliminary:</b> the complete ENTSO-E sum arrives about 30 minutes after the end of the quarter-hour (median), on some evenings only after more than an hour. Until then the missing control areas come from the TSOs' area balances (RZ-Saldo) on netztransparenz.de (about 15 minutes), otherwise from the NRV balance. It is the same quantity: checked against the official value for 26–28 Sep 2026 (267 quarter-hours), 262 deviated by at most 10 MW, mostly 0 MW; five (Amprion) by 100–170 MW. The official value replaces the preliminary one automatically.</li>
+          <li><b>reBAP:</b> on the same day, the TSOs' estimate (AEP-Schätzer). ENTSO-E (A85) publishes exactly the same values, but at times up to an hour later, so the latest quarter-hours come directly from netztransparenz.de. The settled price follows days to weeks later.</li>
+          <li><b>NRV balance:</b> balance of the German grid control cooperation (Netzregelverbund), i.e. the total balancing need (positive = deficit, upward regulation needed). It equals the system balance with the opposite sign.</li>
+          <li><b>aFRR / mFRR:</b> balancing energy actually activated, upward minus downward, for all of Germany from netztransparenz.de. Without access there, from ENTSO-E, where Amprion is missing.</li>
         </ul>
         <p class="muted" id="srcSysAll"></p>
       </details>
@@ -187,12 +234,14 @@
   </section>
 
   <footer>
-    Quellen: <a href="https://transparency.entsoe.eu/" rel="noreferrer">ENTSO-E Transparency Platform</a>; optional <a href="https://www.netztransparenz.de/" rel="noreferrer">netztransparenz.de</a>.
-    Fehlende Daten werden nie als 0 dargestellt. Historische ENTSO-E-Daten können revidiert werden. Keine Handelsempfehlung.
+    <span data-lang="de">Quellen: <a href="https://transparency.entsoe.eu/" rel="noreferrer">ENTSO-E Transparency Platform</a>; optional <a href="https://www.netztransparenz.de/" rel="noreferrer">netztransparenz.de</a>.
+    Fehlende Daten werden nie als 0 dargestellt. Historische ENTSO-E-Daten können revidiert werden. Keine Handelsempfehlung.</span>
+    <span data-lang="en">Sources: <a href="https://transparency.entsoe.eu/" rel="noreferrer">ENTSO-E Transparency Platform</a>; optionally <a href="https://www.netztransparenz.de/" rel="noreferrer">netztransparenz.de</a>.
+    Missing data is never shown as 0. Historical ENTSO-E data may be revised. Not trading advice.</span>
     <span id="version"></span>
     <div class="copy">© <span id="year">2026</span> Kaan Akdere · DE Power Desk</div>
   </footer>
 </main>
-<script src="/static/app.js?v=5.7.1"></script>
+<script src="/static/app.js?v=5.8.0"></script>
 </body>
 </html>

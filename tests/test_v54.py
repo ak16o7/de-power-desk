@@ -111,7 +111,8 @@ class FrontendV54Tests(unittest.TestCase):
     def test_preliminary_bars_are_marked(self):
         js = Path('app/static/app.js').read_text(encoding='utf-8')
         self.assertIn("s['Net imbalance volume nowcast']", js)
-        self.assertIn("bk('vorläufig'", js)                   # v5.7: key in the chart head, band in the chart
+        self.assertIn("bk(tr('prelim')", js)                  # v5.7: key in the chart head, band in the chart
+        self.assertIn("prelim: ['vorläufig', 'preliminary']", js)
         self.assertNotIn("pattern:", js)                       # no hatching (v5.4.1)
         self.assertIn("prelimSet", js)                          # same bar traces, per-point styling
         self.assertIn("opacity: arr.map((q) => (isPre(q) ? PRELIM_OPACITY : 1))", js)
@@ -120,7 +121,8 @@ class FrontendV54Tests(unittest.TestCase):
         js = Path('app/static/app.js').read_text(encoding='utf-8')
         self.assertIn("hovertemplate: `%{y:,.0f} MW`", js)
         # v5.5: one chart for all zones; v5.7: the chart head says what the lines are
-        self.assertIn("head('chOut', 'Nicht verfügbare Leistung', 'MW'", js)
+        self.assertIn("head('chOut', tr('outTitle'), 'MW'", js)
+        self.assertIn("outTitle: ['Nicht verfügbare Leistung', 'Unavailable capacity']", js)
         self.assertNotIn("`${ZONE_NAMES[z]} nicht verfügbar`", js)
 
 
