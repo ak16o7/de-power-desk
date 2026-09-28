@@ -1,4 +1,4 @@
-# DE Power Desk v5.7
+# DE Power Desk v5.7.1
 
 Ein Intraday-Dashboard für den deutschen Strommarkt auf Basis von ENTSO-E-Daten, optional ergänzt um netztransparenz.de. Es läuft mit FastAPI und lokal gebündeltem Plotly und wird auf Render mit Docker betrieben. Routen, Umgebungsvariablen und Deployment sind zu v4.4.1 kompatibel.
 
@@ -14,6 +14,11 @@ Ein Intraday-Dashboard für den deutschen Strommarkt auf Basis von ENTSO-E-Daten
 | **Systembilanz / reBAP** | Systembilanz in MW (+ lang, − kurz; A86, die jüngsten Viertelstunden vorläufig von netztransparenz), reBAP (A85), aFRR/mFRR | Ob das System gerade kurz oder lang ist |
 
 Die Markierung „bullish/bearish“ ist eine einfache Desk-Heuristik: EE-Abweichung ab ±300 MW, Residuallast ab ±500 MW, Kraftwerks-Δ ab ±300 MW. Sie ist keine Handelsempfehlung.
+
+## Neu in v5.7.1
+
+- **reBAP so aktuell wie netztransparenz.** ENTSO-E A85 ist 1:1 der AEP-Schätzer der Netzbetreiber (live geprüft 27./28.09.2026: 171 Viertelstunden, max. 0,005 €/MWh Rundung), kam am 28.09. abends aber über eine Stunde später. Viertelstunden nach dem letzten A85-Wert kommen jetzt direkt vom AEP-Schätzer auf netztransparenz.de (`NrvSaldo/AepSchaetzer/Betrieblich`). Kennzahlen `price_source` und `price_ntp_points` zeigen, woher der jüngste Wert stammt.
+- **Methodik mit Zahlen:** Vorläufige Systembilanz gegen offiziellen A86-Wert, 26.–28.09.2026: 262 von 267 Viertelstunden ≤ 10 MW Abweichung (meist 0), fünf Ausreißer (Amprion) um 100–170 MW.
 
 ## Neu in v5.7
 
@@ -117,7 +122,7 @@ python -m uvicorn app.main:app --port 8000
 
 ```bash
 pip install -r requirements-dev.txt
-python -m unittest discover -s tests -v                                  # offline, 157 Tests
+python -m unittest discover -s tests -v                                  # offline, 162 Tests
 python scripts/live_smoke.py --env-file .env --day 2026-09-22            # echter ENTSO-E-Abgleich
 python scripts/ntp_check.py --day 2026-09-22                             # netztransparenz.de-Zugang prüfen
 python scripts/smoke_http.py --base-url https://de-power-desk.onrender.com --day 2026-09-22 --user … --password …

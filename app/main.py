@@ -33,7 +33,7 @@ from fastapi.staticfiles import StaticFiles
 from app import ntp
 from app.quality import classify_notice, outage_breakdown, panel_quality
 
-VERSION = "5.7.0"
+VERSION = "5.7.1"
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR.parent / ".env")
 
@@ -1752,12 +1752,22 @@ def fetch_balancing(day: str | None, force: bool = False) -> dict[str, Any]:
         imbalance_combined = {**imbalance_volume, **imbalance_nowcast_series}
         combined_last = latest_point(imbalance_combined)
         imbalance_1h = trailing_mean(imbalance_combined, combined_last[0]) if combined_last else None
+        # reBAP: A85 is the TSOs' AEP-Schätzer republished by ENTSO-E, at
+        # times an hour late. MTUs after the last A85 value come straight from
+        # netztransparenz (same figure, same status: an estimate).
+        price_ntp: dict[datetime, float] = {}
+        if ntp_data and ntp_data.get("aep") and price_mode in ("single", "none"):
+            last_price = max(price_single) if price_single else None
+            price_ntp = {t: v for t, v in ntp_data["aep"].items() if t < end and (last_price is None or t > last_price)}
+            if price_ntp:
+                price_single = {**price_single, **price_ntp}
+                price_mode = "single"
         price_series_for_status = price_single or price_short or price_long
         price_point = latest_point(price_series_for_status)
         # Same-day reBAP/imbalance values are operational estimates; the settled
         # reBAP follows days to weeks later as quality-assured data
         # (netztransparenz.de). Only an explicit docStatus A02 counts as final.
-        price_status = publication_status(price_rows, price_point[0] if price_point else None)
+        price_status = "preliminary" if price_point and price_point[0] in price_ntp else publication_status(price_rows, price_point[0] if price_point else None)
         volume_status = publication_status(volume_rows, ivp[0] if ivp else None)
 
         # Germany-wide activation from ENTSO-E needs all four LFAs. When one is
@@ -1818,7 +1828,7 @@ def fetch_balancing(day: str | None, force: bool = False) -> dict[str, Any]:
             st = ntp_data["status"]
             state = "ok" if all(v == "ok" for v in st.values()) else "partial" if any(v == "ok" for v in st.values()) else "error"
             sources["NTP"] = {"state": state, "label": "netztransparenz.de NRV-Saldo + aFRR/mFRR", "scope": "German control block", "detail": st, "diag": ntp_data.get("diag", {}),
-                              "rz_saldo": ntp_data.get("rz_status", "not_requested")}
+                              "rz_saldo": ntp_data.get("rz_status", "not_requested"), "aep_schaetzer": ntp_data.get("aep_status", "no_data")}
         else:
             sources["NTP"] = {"state": "not_configured", "label": "netztransparenz.de", "scope": "set NTP_CLIENT_ID / NTP_CLIENT_SECRET"}
 
@@ -1855,6 +1865,8 @@ def fetch_balancing(day: str | None, force: bool = False) -> dict[str, Any]:
                 "nrv_saldo_mw": round(nrvp[1], 1) if nrvp else None, "nrv_as_of": nrvp[0].isoformat() if nrvp else None,
                 "nrv_state": ("deficit" if nrvp[1] > 0 else "surplus" if nrvp[1] < 0 else "balanced") if nrvp else None,
                 "price_mode": price_mode,
+                "price_ntp_points": len(price_ntp),
+                "price_source": "AEP-Schätzer (netztransparenz.de)" if price_point and price_point[0] in price_ntp else "A85 (ENTSO-E)" if price_point else None,
                 "imbalance_price_eur_mwh": latest_val(price_single),
                 "imbalance_price_long_eur_mwh": latest_val(price_long), "imbalance_price_short_eur_mwh": latest_val(price_short),
                 "price_as_of": latest_timestamp(price_single or price_short or price_long),
