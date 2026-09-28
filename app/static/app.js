@@ -141,18 +141,29 @@
   }
   const line = (pts, name, color, dash = 'solid', yaxis = 'y', extra = {}) => Object.assign({
     type: 'scatter', mode: 'lines', x: xs(pts), y: ys(pts), name, yaxis,
-    line: { color, width: 2, dash, shape: 'hv' }, hovertemplate: `%{y:,.0f}`,
+    line: { color, width: 2, dash, shape: 'hv' }, hovertemplate: `%{y:,.0f} MW`,
   }, extra);
-  const bars = (pts, name, yaxis = 'y2', unit = 'MW', names = ['über Prognose', 'unter Prognose']) => {
+  // prelim: Set of timestamps whose bars are preliminary. They keep the exact
+  // bar geometry and colour but are drawn as a pale fill with a full-colour
+  // outline (same traces, per-point styling) - no extra traces, so the
+  // regular bars keep their width and position.
+  const PRELIM_OPACITY = 0.35;
+  const bars = (pts, name, yaxis = 'y2', unit = 'MW', names = ['über Prognose', 'unter Prognose'], prelim = null) => {
     const pos = cssVar('--pos'), neg = cssVar('--neg');
     // Exact zeros belong to neither side (e.g. A86 "balanced"); they would be invisible anyway.
     const p = (pts || []).map((q) => ({ t: q.t, v: q.v > 0 ? q.v : null }));
     const n = (pts || []).map((q) => ({ t: q.t, v: q.v < 0 ? q.v : null }));
-    return [
+    const isPre = (q) => !!prelim && prelim.has(q.t);
+    const trace = (arr, color, label) => ({
+      type: 'bar', x: xs(arr), y: ys(arr), name: `${name}: ${label}`, yaxis, showlegend: false,
       // Pre-formatted (de-DE, explicit sign): Plotly's '%{y:+,.0f}' is not applied in unified hover and printed raw values like '-58.431'.
-      { type: 'bar', x: xs(p), y: ys(p), customdata: p.map((q) => sgn(q.v)), name: `${name}: ${names[0]}`, yaxis, marker: { color: pos }, hovertemplate: `%{customdata} ${unit}`, showlegend: false },
-      { type: 'bar', x: xs(n), y: ys(n), customdata: n.map((q) => sgn(q.v)), name: `${name}: ${names[1]}`, yaxis, marker: { color: neg }, hovertemplate: `%{customdata} ${unit}`, showlegend: false },
-    ];
+      customdata: arr.map((q) => `${sgn(q.v)} ${unit}${isPre(q) ? ' · vorläufig' : ''}`),
+      hovertemplate: '%{customdata}',
+      marker: prelim
+        ? { color, opacity: arr.map((q) => (isPre(q) ? PRELIM_OPACITY : 1)), line: { color, width: arr.map((q) => (isPre(q) ? 1.5 : 0)) } }
+        : { color },
+    });
+    return [trace(p, pos, names[0]), trace(n, neg, names[1])];
   };
   function plot(id, traces, layout) {
     const el = $(id);
@@ -308,7 +319,7 @@
       }).join('') + '</tbody>';
 
     const z = state.outZone;
-    plot('chOut', [line(d.series?.[z], `${ZONE_NAMES[z]} nicht verfügbar`, cssVar('--s1'), 'solid', 'y', { showlegend: false })],
+    plot('chOut', [line(d.series?.[z], `Nicht verfügbare Leistung ${ZONE_NAMES[z]}`, cssVar('--s1'), 'solid', 'y', { showlegend: false })],
       baseLayout({ margin: { l: 56, r: 12, t: 10, b: 30 }, yaxis: Object.assign(baseLayout().yaxis, { title: { text: `MW · ${ZONE_NAMES[z]}`, font: { size: 10 } }, rangemode: 'tozero' }) }));
 
     const typeLabel = (n) => (n.notice_type === 'forced' ? '<span class="flag">ungeplant</span>' : n.notice_type === 'planned' ? 'geplant' : 'unbekannt');
@@ -352,13 +363,23 @@
     setSig('sigSys', {
       value: isNum(k.system_now_mw) ? `${sgn(k.system_now_mw)}<small>MW</small>` : '—',
       sub: `${short ? 'System kurz' : long ? 'System lang' : nowState === 'balanced' ? 'ausgeglichen' : '—'} · reBAP${prelim ? ' (vorl.)' : ''} <b>${fmt(price, NF2)}</b> €/MWh<br>A86 ${hhmm(k.as_of)}: <b>${sgn(k.imbalance_volume_mwh)}</b> MWh · ${act}`,
-      foot: `<span>${mtu(k.system_now_as_of || k.as_of)}</span><span title="${fromNrv ? 'Bilanz = −NRV-Saldo (netztransparenz.de); A86 folgt später' : 'Bilanz = A86 × 4'}">${fromNrv ? 'aus NRV-Saldo' : 'aus A86'}</span><span>Ø 1 h A86 ${sgn(k.imbalance_1h_avg_mw)} MW</span>${deltas(k.system_now_changes || k.changes)}`,
+      foot: `<span>${mtu(k.system_now_as_of || k.as_of)}</span><span title="${fromNrv ? 'Bilanz = −NRV-Saldo (netztransparenz.de); A86 folgt später' : 'Bilanz = A86 × 4'}">${fromNrv ? 'aus NRV-Saldo' : 'aus A86'}</span><span title="${k.imbalance_nowcast_points ? 'letzte Stunde inkl. vorläufiger Viertelstunden aus netztransparenz' : 'letzte Stunde aus A86'}">Ø 1 h ${sgn(k.imbalance_1h_avg_mw)} MW${k.imbalance_nowcast_points ? '*' : ''}</span>${deltas(k.system_now_changes || k.changes)}`,
       tag: short ? { cls: 'bull', text: 'kurz' } : long ? { cls: 'bear', text: 'lang' } : null,
     });
 
     const traces = [
-      ...bars(s['Net imbalance volume'], 'Bilanz', 'y', 'MWh', ['lang', 'kurz']).map((t, i) => Object.assign(t, { showlegend: true, name: i === 0 ? 'System lang (MWh)' : 'System kurz (MWh)' })),
     ];
+    // Latest quarter-hours before the A86 sum is complete: the same TSO figure
+    // from netztransparenz (−RZ-Saldo ÷ 4). Same bars, pale fill + outline.
+    const nowcast = s['Net imbalance volume nowcast'] || [];
+    const prelimSet = new Set(nowcast.map((q) => q.t));
+    traces.unshift(...bars([...(s['Net imbalance volume'] || []), ...nowcast], 'Bilanz', 'y', 'MWh', ['lang', 'kurz'], prelimSet)
+      .map((t, i) => Object.assign(t, { showlegend: true, name: i === 0 ? 'System lang (MWh)' : 'System kurz (MWh)' })));
+    if (nowcast.length) {
+      // Legend swatch only (a scatter point takes no bar slot).
+      traces.push({ type: 'scatter', mode: 'markers', x: [null], y: [null], yaxis: 'y', name: 'vorläufig (netztransparenz)', hoverinfo: 'skip',
+        marker: { symbol: 'square', size: 12, color: cssVar('--muted'), opacity: PRELIM_OPACITY, line: { color: cssVar('--muted'), width: 1.5 } } });
+    }
     if (k.price_mode === 'single' || !(s['Imbalance price long'] || []).length) {
       traces.push(line(s['Imbalance price'], prelim ? 'reBAP €/MWh (vorläufig)' : 'reBAP €/MWh', cssVar('--s2'), 'solid', 'y2', { hovertemplate: '%{y:,.2f} €/MWh' }));
     } else {

@@ -1,4 +1,4 @@
-# DE Power Desk v5.3
+# DE Power Desk v5.4.1
 
 Ein Intraday-Dashboard für den deutschen Strommarkt auf Basis von ENTSO-E-Daten, optional ergänzt um netztransparenz.de. Es läuft mit FastAPI und lokal gebündeltem Plotly und wird auf Render mit Docker betrieben. Routen, Umgebungsvariablen und Deployment sind zu v4.4.1 kompatibel.
 
@@ -14,6 +14,17 @@ Ein Intraday-Dashboard für den deutschen Strommarkt auf Basis von ENTSO-E-Daten
 | **Systembilanz / reBAP** | A86-Bilanz (negativ = System kurz), reBAP (A85), aFRR, NRV-Saldo | Ob das System gerade kurz oder lang ist |
 
 Die Markierung „bullish/bearish“ ist eine einfache Desk-Heuristik: EE-Abweichung ab ±300 MW, Residuallast ab ±500 MW, Kraftwerks-Δ ab ±300 MW. Sie ist keine Handelsempfehlung.
+
+## Neu in v5.4.1
+
+- Vorläufige Balken ohne Schraffur und ohne zusätzliche Balken-Spuren: blasse Füllung mit Rand in derselben Farbe, die regulären Balken behalten Breite und Position.
+- Tooltips aller MW-Linien mit Einheit („37.242 MW“ statt „37.242“).
+- Kraftwerks-Diagramm: „Nicht verfügbare Leistung DE-LU“ statt „DE-LU nicht verfügbar“ (las sich wie „keine Daten“).
+
+## Neu in v5.4
+
+- **Vorläufige Systembilanz aus netztransparenz.** Die A86-Summe wartet auf den langsamsten Netzbetreiber (meist TenneT, Median 33 min). Die Netzbetreiber veröffentlichen denselben Wert als RZ-Saldo bei netztransparenz früher (TenneT Median 16 min). Live geprüft: A86 = −RZ-Saldo ÷ 4, exakt für 50Hertz, TenneT, TransnetBW, r = −0,989 für Amprion; Stichprobe 25.09. 21:00: vorläufig 67,35 MWh, später A86 67,24 MWh. Die fehlenden Regelzonen der letzten Viertelstunden werden daraus ergänzt und als blasse Balken mit Rand („vorläufig“) gezeigt – gleiche Breite und Position wie die übrigen Balken; sobald A86 vollständig ist, ersetzt es die Werte. Der Stundenschnitt schließt sie ein (mit * markiert). Die A86-Kennzahl selbst bleibt reines ENTSO-E.
+- **Abschalten ohne Code:** In Render unter Environment `NTP_IMBALANCE_NOWCAST=0` setzen – danach verhält sich die Seite exakt wie v5.3.
 
 ## Neu in v5.3
 
@@ -87,7 +98,7 @@ python -m uvicorn app.main:app --port 8000
 
 ```bash
 pip install -r requirements-dev.txt
-python -m unittest discover -s tests -v                                  # offline, 135 Tests
+python -m unittest discover -s tests -v                                  # offline, 144 Tests
 python scripts/live_smoke.py --env-file .env --day 2026-09-22            # echter ENTSO-E-Abgleich
 python scripts/ntp_check.py --day 2026-09-22                             # netztransparenz.de-Zugang prüfen
 python scripts/smoke_http.py --base-url https://de-power-desk.onrender.com --day 2026-09-22 --user … --password …
