@@ -2,6 +2,8 @@
 
 Ein Intraday-Dashboard für den deutschen Strommarkt auf Basis von ENTSO-E-Daten, optional ergänzt um netztransparenz.de. Es läuft mit FastAPI und lokal gebündeltem Plotly und wird auf Render mit Docker betrieben. Routen, Umgebungsvariablen und Deployment sind zu v4.4.1 kompatibel.
 
+Demo Website: https://de-power-desk.onrender.com/
+
 ## Die sechs Signale auf einen Blick
 
 | Kachel | Was sie zeigt | Warum es zählt |
