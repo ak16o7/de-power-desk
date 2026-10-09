@@ -1,8 +1,10 @@
 # DE Power Desk v5.8
 
-Ein Intraday-Dashboard für den deutschen Strommarkt auf Basis von ENTSO-E-Daten, optional ergänzt um netztransparenz.de. Es läuft mit FastAPI und lokal gebündeltem Plotly und wird auf Render mit Docker betrieben. Routen, Umgebungsvariablen und Deployment sind zu v4.4.1 kompatibel.
+Ein Intraday-Dashboard für den deutschen Strommarkt auf Basis von ENTSO-E-Daten, optional ergänzt um netztransparenz.de. Es läuft mit FastAPI und lokal gebündeltem Plotly und wird auf Render mit Docker betrieben.
 
 Demo Website: https://de-power-desk.onrender.com/
+
+<img width="2786" height="1552" alt="image" src="https://github.com/user-attachments/assets/89411190-e6d4-463b-a0b5-11d1e287e24c" />
 
 ## Die sechs Signale auf einen Blick
 
