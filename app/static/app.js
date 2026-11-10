@@ -26,6 +26,17 @@
     nextUpdate: ['Nächstes Update in {s} s', 'Next update in {s} s'], liveOff: ['Live aus', 'Live off'],
     themeLight: ['Helles Design', 'Light theme'], themeDark: ['Dunkles Design', 'Dark theme'], ntpActive: ['netztransparenz.de aktiv', 'netztransparenz.de active'],
     noData: ['Keine Daten für diese Auswahl veröffentlicht.', 'No data published for this selection.'], toggleKey: ['ein-/ausblenden', 'show / hide'],
+    // v5.9: stale official actuals and the control-area bridge
+    staleIn: ['Ist-Daten veraltet: {p}', 'Actuals stale: {p}'],
+    staleInfo: ['Die offiziellen Ist-Werte von ENTSO-E sind älter als {n} Minuten.', 'The official ENTSO-E actuals are older than {n} minutes.'],
+    lagSince: ['{a} fehlt bei ENTSO-E seit {t}', '{a} missing on ENTSO-E since {t}'], lagNone: ['{a} fehlt bei ENTSO-E', '{a} missing on ENTSO-E'],
+    thenEst: ['danach geschätzt', 'estimated from then on'], thenStale: ['Werte danach fehlen', 'no values after that'],
+    lagInfo: ['ENTSO-E veröffentlicht die Deutschland-Summe erst, wenn alle vier Regelzonen geliefert haben. Vorläufige Werte: Summe der übrigen Regelzonen plus Schätzung der fehlenden; Details unter „Quellen & Methodik“.',
+      'ENTSO-E publishes the German total only once all four control areas have delivered. Preliminary values: sum of the other control areas plus an estimate of the missing one; see “Sources & methodology”.'],
+    bordersLag: ['Grenzen ohne aktuelle Flüsse: {b}', 'Borders without current flows: {b}'],
+    estOf: ['{a} geschätzt', '{a} estimated'], areaSum: ['Summe der Regelzonen', 'control-area sum'],
+    actualPrelim: ['Ist vorläufig', 'Actual preliminary'], officialTo: ['offiziell bis {t}', 'official through {t}'], prelimTo: ['vorläufig bis {t}', 'preliminary through {t}'],
+    loadActPrelim: ['Last Ist vorläufig', 'Load actual preliminary'], residActPrelim: ['Residuallast Ist vorläufig', 'Residual load actual preliminary'],
     minAgo: ['· {n} min alt', '· {n} min ago'], minAgoTitle: ['Minuten seit Ende dieser Viertelstunde', 'Minutes since the end of this quarter-hour'],
     // signal tiles
     avg1h: ['Ø 1 h', '1 h avg'], avgDay: ['Ø Tag', 'day avg'],
@@ -85,6 +96,8 @@
     const s = TXT[key] ? TXT[key][lang() === 'en' ? 1 : 0] : key;
     return vars ? s.replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? '') : s;
   };
+  const AREA_NAMES = { '50HERTZ': '50Hertz', AMPRION: 'Amprion', TENNET_DE: 'TenneT', TRANSNETBW: 'TransnetBW' };
+  const areaNames = (list) => (list || []).map((a) => AREA_NAMES[a] || a).join(', ');
   const BORDER_NAMES = { FR: 'FR', NL: 'NL', BE: 'BE', DK_1: 'DK1', DK_2: 'DK2', AT: 'AT', CH: 'CH', CZ: 'CZ', PL: 'PL', SE_4: 'SE4', NO_2: 'NO2' };
   const ZONE_NAMES = { DE_LU: 'DE-LU', FR: 'FR', NL: 'NL', BE: 'BE' };
   const OUT_ZONES = ['DE_LU', 'FR', 'NL', 'BE'];
@@ -193,6 +206,30 @@
     const mb = toMap(b);
     return (a || []).filter((p) => mb.has(p.t)).map((p) => ({ t: p.t, v: p.v - mb.get(p.t) }));
   };
+
+  // ---------- v5.9: bridged MTUs ----------
+  // "... Fill" series hold the MTUs ENTSO-E has no German total for yet
+  // (control-area sum, one area possibly estimated). They are drawn as a
+  // dotted continuation of the official line and as lighter bars.
+  const joinFill = (official, fill) => ((fill || []).length ? [...(official || []).slice(-1), ...fill] : []);
+  const prelimBand = (fill) => {
+    if (!(fill || []).length) return [];
+    const x0 = Date.parse(fill[0].t) - 450e3, x1 = Date.parse(fill.at(-1).t) + 450e3;
+    return [{ type: 'rect', layer: 'below', xref: 'x', yref: 'paper', x0: utcX(x0), x1: utcX(x1), y0: 0, y1: 1,
+      fillcolor: cssVar('--line-soft'), opacity: 0.8, line: { width: 0 } }];
+  };
+  // Tile / chip text for a panel's gapfill block.
+  const gapWho = (g) => ((g?.estimated_areas || []).length ? tr('estOf', { a: areaNames(g.estimated_areas) }) : tr('areaSum'));
+  function gapChip(g) {
+    const lag = Object.entries(g?.lagging || {});
+    if (!lag.length) return '';
+    const since = lag.map(([, t]) => t).filter(Boolean).sort()[0];
+    const names = areaNames(lag.map(([a]) => a));
+    // "since" = end of the last quarter-hour the area delivered.
+    const head = since ? tr('lagSince', { a: names, t: hhmm(new Date(Date.parse(since) + 900e3).toISOString()) }) : tr('lagNone', { a: names });
+    return chip(`${head} · ${g.state === 'filled' ? tr('thenEst') : tr('thenStale')}`, 'warn', tr('lagInfo'));
+  }
+  const approx = (est) => (est ? '<span class="approx" aria-hidden="true">≈</span>' : '');
 
   // ---------- signal tiles ----------
   function setSig(id, { value, sub = '', foot = '', tag = null }) {
@@ -361,10 +398,12 @@
     if (!d) return;
     const k = d.kpi || {};
     const tech = k.tech_error_mw || {};
+    const g = d.gapfill || {};
+    const estFlag = k.estimated ? `<span class="flag" title="${esc(tr('lagInfo'))}">${esc(gapWho(g))}</span>` : '';
     setSig('sigRes', {
-      value: mw(k.res_error_mw),
+      value: approx(k.estimated) + mw(k.res_error_mw),
       sub: `Solar <b>${sgn(tech.Solar)}</b> · On <b>${sgn(tech['Wind Onshore'])}</b> · Off <b>${sgn(tech['Wind Offshore'])}</b><br>${tr('vsId')}: <b>${sgn(k.res_error_id_mw)}</b> MW`,
-      foot: `<span>${mtu(k.as_of)}</span><span title="${tr('avg1hTitle')}">${tr('avg1h')} ${sgn(k.res_error_1h_mw)} MW</span><span>${tr('avgDay')} ${sgn(k.day_avg_error_mw)} MW</span>${deltas(k.changes)}`,
+      foot: `<span>${mtu(k.as_of)}</span>${estFlag}<span title="${tr('avg1hTitle')}">${tr('avg1h')} ${sgn(k.res_error_1h_mw)} MW</span><span>${tr('avgDay')} ${sgn(k.day_avg_error_mw)} MW</span>${deltas(k.changes)}`,
       tag: dir(k.res_error_mw, 300, 'bear'),
     });
     const hasFwd = isNum(k.next4h_revision_avg_mw);
@@ -379,36 +418,50 @@
     const s = d.series || {};
     const T = state.resTech;
     const pts = (suffix) => s[`${T} ${suffix}`] || [];
-    const err = T === 'RES' ? s['RES Forecast Error'] : diff(pts('Actual'), pts('Day-ahead'));
+    const fill = pts('Actual Fill');
+    const errOfficial = T === 'RES' ? s['RES Forecast Error'] : diff(pts('Actual'), pts('Day-ahead'));
+    const errFill = T === 'RES' ? (s['RES Forecast Error Fill'] || []) : diff(fill, pts('Day-ahead'));
+    const err = [...(errOfficial || []), ...errFill];
     const C = ['--s1', '--s2', '--s3', '--s4'].map(cssVar);
     const series = [[tr('actual'), 'Actual', 'solid'], [tr('dayAhead'), 'Day-ahead', 'dash'], [tr('id0800'), 'Intraday', 'dot'], [tr('latest'), 'Current', 'dashdot']];
     const main = series.map(([name, key, dash], i) => line(pts(key), name, C[i], dash));
-    const dev = bars(err);
+    const keys = series.map(([name, , dash], i) => lk(name, C[i], dash));
+    if (fill.length) {
+      main.splice(1, 0, line(joinFill(pts('Actual'), fill), tr('actualPrelim'), C[0], 'dot'));
+      keys.splice(1, 0, lk(tr('actualPrelim'), C[0], 'dot'));
+    }
+    const dev = bars(err, 'y', 'MW', [tr('aboveFc'), tr('belowFc')], errFill.length ? new Set(errFill.map((q) => q.t)) : null);
     const range = xRange(main, dev);
     const techName = { RES: tr('techRES'), Solar: 'Solar', 'Wind Onshore': 'Wind onshore', 'Wind Offshore': 'Wind offshore' }[T] || T;
-    head('chRes', techName, 'MW', series.map(([name, , dash], i) => lk(name, C[i], dash)));
+    head('chRes', techName, 'MW', keys);
     plot('chRes', main, baseLayout(), { xLabels: false, range });
-    head('chResDiff', tr('resDevTitle'), 'MW', [bk(tr('aboveFc'), cssVar('--pos')), bk(tr('belowFc'), cssVar('--neg'))]);
-    plot('chResDiff', dev, baseLayout({ bargap: 0.15 }), { range });
+    head('chResDiff', tr('resDevTitle'), 'MW', [bk(tr('aboveFc'), cssVar('--pos')), bk(tr('belowFc'), cssVar('--neg')),
+      ...(errFill.length ? [bk(tr('prelim'), cssVar('--muted'), 0.35)] : [])]);
+    plot('chResDiff', dev, baseLayout({ bargap: 0.15, shapes: prelimBand(errFill) }), { range });
     const errVals = (err || []).map((p) => p.v);
     const mae = errVals.length ? errVals.reduce((a, v) => a + Math.abs(v), 0) / errVals.length : null;
     const maxAbs = errVals.length ? errVals.reduce((a, v) => (Math.abs(v) > Math.abs(a) ? v : a), 0) : null;
     $('mRes').innerHTML = [
-      metric(tr('errNow'), `${sgn(T === 'RES' ? k.res_error_mw : tech[T])} MW`, tr('actMinusDaAt', { t: hhmm(k.as_of) })),
+      metric(tr('errNow'), `${k.estimated ? '≈ ' : ''}${sgn(T === 'RES' ? k.res_error_mw : tech[T])} MW`, tr('actMinusDaAt', { t: hhmm(k.as_of) })),
       metric(tr('mae'), `${fmt(mae)} MW`, tr('maeSub')),
       metric(tr('maxErr'), `${sgn(maxAbs)} MW`, tr('since0')),
-      metric(tr('actThrough'), hhmm(d.freshness?.actual_through), tr('lastComplete')),
+      // "through" = start of the last MTU, like every MTU label on the page.
+      metric(tr('actThrough'), hhmm(d.freshness?.actual_through),
+        d.freshness?.filled_through ? tr('prelimTo', { t: hhmm(d.freshness.filled_through) }) : tr('lastComplete')),
     ].join('');
+    $('srcRes').innerHTML = gapChip(g);
   }
 
   function renderLoad() {
     const d = state.data.load;
     if (!d) return;
     const k = d.kpi || {}, s = d.series || {};
+    const g = d.gapfill || {};
+    const estFlag = k.estimated ? `<span class="flag" title="${esc(tr('lagInfo'))}">${esc(gapWho(g))}</span>` : '';
     setSig('sigResid', {
-      value: mw(k.residual_surprise_mw),
+      value: approx(k.estimated) + mw(k.residual_surprise_mw),
       sub: `${tr('residualLoad')} <b>${fmt(k.residual_load_mw)}</b> MW<br>${tr('loadActMinusDa')} <b>${sgn(k.load_error_mw)}</b> MW`,
-      foot: `<span>${mtu(k.surprise_as_of)}</span><span>${tr('avg1h')} ${sgn(k.residual_surprise_1h_mw)} MW</span><span>${tr('avgDay')} ${sgn(k.day_avg_surprise_mw)} MW</span>`,
+      foot: `<span>${mtu(k.surprise_as_of)}</span>${estFlag}<span>${tr('avg1h')} ${sgn(k.residual_surprise_1h_mw)} MW</span><span>${tr('avgDay')} ${sgn(k.day_avg_surprise_mw)} MW</span>`,
       tag: dir(k.residual_surprise_mw, 500, 'bull'),
     });
     // Colour = quantity (Last / Residuallast), dash = Ist / Day-Ahead.
@@ -416,15 +469,25 @@
     const keys = [lk(tr('loadAct'), cL), lk(tr('loadDa'), cL, 'dash'), lk(tr('residAct'), cR), lk(tr('residDa'), cR, 'dash')];
     const main = [s['Load Actual'], s['Load Forecast'], s['Residual Load Actual'], s['Residual Load Forecast']]
       .map((pts, i) => line(pts, keys[i].name, keys[i].color, keys[i].dash));
-    const dev = bars(s['Residual Load Surprise'], 'y', 'MW', [tr('higherFc'), tr('lowerFc')]);
+    // v5.9: bridged MTUs as dotted continuations, lighter bars.
+    const loadFill = s['Load Actual Fill'] || [], residFill = s['Residual Load Actual Fill'] || [], surpFill = s['Residual Load Surprise Fill'] || [];
+    [[loadFill, s['Load Actual'], tr('loadActPrelim'), cL], [residFill, s['Residual Load Actual'], tr('residActPrelim'), cR]].forEach(([fill, official, name, color]) => {
+      if (!fill.length) return;
+      main.push(line(joinFill(official, fill), name, color, 'dot'));
+      keys.push(lk(name, color, 'dot'));
+    });
+    const dev = bars([...(s['Residual Load Surprise'] || []), ...surpFill], 'y', 'MW', [tr('higherFc'), tr('lowerFc')],
+      surpFill.length ? new Set(surpFill.map((q) => q.t)) : null);
     const range = xRange(main, dev);
     head('chLoad', tr('loadTitle'), 'MW', keys);
     plot('chLoad', main, baseLayout(), { xLabels: false, range });
-    head('chLoadDiff', tr('residDevTitle'), 'MW', [bk(tr('higherFc'), cssVar('--pos')), bk(tr('lowerFc'), cssVar('--neg'))]);
-    plot('chLoadDiff', dev, baseLayout({ bargap: 0.15 }), { range });
-    const la = ys(s['Load Actual']);
+    head('chLoadDiff', tr('residDevTitle'), 'MW', [bk(tr('higherFc'), cssVar('--pos')), bk(tr('lowerFc'), cssVar('--neg')),
+      ...(surpFill.length ? [bk(tr('prelim'), cssVar('--muted'), 0.35)] : [])]);
+    plot('chLoadDiff', dev, baseLayout({ bargap: 0.15, shapes: prelimBand(surpFill) }), { range });
+    const la = ys([...(s['Load Actual'] || []), ...loadFill]);
+    $('srcLoad').innerHTML = gapChip(g);
     $('mLoad').innerHTML = [
-      metric(tr('residNow'), `${fmt(k.residual_load_mw)} MW`, hhmm(k.as_of)),
+      metric(tr('residNow'), `${k.estimated ? '≈ ' : ''}${fmt(k.residual_load_mw)} MW`, k.estimated ? `${hhmm(k.as_of)} · ${tr('prelim')}` : hhmm(k.as_of)),
       metric(tr('loadFcErr'), `${sgn(k.load_error_mw)} MW`, tr('loadActMinusDaLong')),
       metric(tr('meanErr'), `${sgn(k.day_avg_surprise_mw)} MW`, tr('residSince0')),
       metric(tr('peakLoad'), `${fmt(la.length ? Math.max(...la) : null)} MW`, tr('since0')),
@@ -436,10 +499,11 @@
     if (!d) return;
     const k = d.kpi || {}, s = d.series || {}, cov = d.coverage || {};
     const flags = d.flags || [];
+    const lagB = Object.keys(d.freshness?.lagging_borders || {}).map((b) => BORDER_NAMES[b] || b);
     setSig('sigFlow', {
       value: mw(k.net_import_mw),
       sub: `Intraday <b>${sgn(k.intraday_xb_mw)}</b> · ${tr('physMinusSched')} <b>${sgn(k.unscheduled_mw)}</b><br>${tr('daSched')} <b>${sgn(k.da_schedule_mw)}</b> MW`,
-      foot: `<span>${mtu(k.as_of)}</span><span>${tr('bordersN', { n: cov.physical_series ?? 0, m: cov.expected ?? 0 })}</span>${flags.length ? `<span class="flag">⚠ ${flags.map((f) => BORDER_NAMES[f.border] || f.border).join(', ')} 0 MW</span>` : ''}`,
+      foot: `<span>${mtu(k.as_of)}</span><span>${tr('bordersN', { n: cov.physical_series ?? 0, m: cov.expected ?? 0 })}</span>${lagB.length && d.freshness?.stale ? `<span class="flag" title="${esc(tr('bordersLag', { b: lagB.join(', ') }))}">⚠ ${esc(lagB.join(', '))}</span>` : ''}${flags.length ? `<span class="flag">⚠ ${flags.map((f) => BORDER_NAMES[f.border] || f.border).join(', ')} 0 MW</span>` : ''}`,
       tag: null,
     });
     const sel = $('flowBorder');
@@ -664,8 +728,25 @@
     const built = PANELS.map((n) => Date.parse(state.data[n]?.updated)).filter(Number.isFinite);
     const stamp = tr('asOf', { t: built.length ? hhmm(new Date(Math.max(...built)).toISOString()) : '—' });
     const names = (list) => list.map((n) => PANEL_NAMES[lang()][n] || n).join(', ');
+    // v5.9: "complete" says the series exist, not that they are current.
+    const stale = PANELS.filter((n) => state.data[n]?.freshness?.stale);
+    const lagging = {};
+    stale.forEach((n) => Object.entries(state.data[n]?.gapfill?.lagging || {}).forEach(([a, t]) => { if (!(a in lagging) || (t && t < lagging[a])) lagging[a] = t; }));
+    const lagAreas = Object.keys(lagging);
+    const staleText = () => {
+      if (!lagAreas.length) return tr('staleIn', { p: names(stale) });
+      const since = Object.values(lagging).filter(Boolean).sort()[0];
+      return since ? tr('lagSince', { a: areaNames(lagAreas), t: hhmm(new Date(Date.parse(since) + 900e3).toISOString()) }) : tr('lagNone', { a: areaNames(lagAreas) });
+    };
+    const staleInfo = () => [tr('staleInfo', { n: state.data[stale[0]]?.freshness?.stale_after_min ?? 90 }), names(stale), lagAreas.length ? tr('lagInfo') : '',
+      Object.keys(state.data.borders?.freshness?.lagging_borders || {}).length && stale.includes('borders')
+        ? tr('bordersLag', { b: Object.keys(state.data.borders.freshness.lagging_borders).map((b) => BORDER_NAMES[b] || b).join(', ') }) : ''].filter(Boolean).join(' · ');
+    // Stale first: "Kraftwerke unvollständig" is the normal state of the
+    // outage panel and would otherwise hide a five-hour-old tile.
+    const warnText = [stale.length ? staleText() : '', partial.length ? tr('incompleteIn', { p: names(partial) }) : ''].filter(Boolean).join(' · ');
+    const warnInfo = [stale.length ? staleInfo() : '', partial.length ? tr('incompleteInfo') : ''].filter(Boolean).join(' · ');
     if (failed.length) setStatus('bad', stamp, tr('errorIn', { p: names(failed) }), `${names(failed)}: ${state.errors[failed[0]]}`);
-    else if (partial.length) setStatus('warn', stamp, tr('incompleteIn', { p: names(partial) }), tr('incompleteInfo'));
+    else if (stale.length || partial.length) setStatus('warn', stamp, warnText, warnInfo);
     else setStatus('ok', stamp, '', tr('allComplete'));
   }
 

@@ -81,6 +81,7 @@ html:not([lang="en"]) [data-lang="en"],html[lang="en"] [data-lang="de"]{display:
 .sig-head{display:flex;justify-content:space-between;align-items:center;gap:8px}
 .sig-label{font-size:12px;color:var(--text-2);font-weight:600}
 .sig-value{font-size:26px;font-weight:700;letter-spacing:-.02em;line-height:1.15;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sig-value .approx{font-weight:500;color:var(--text-2);margin-right:4px}
 .sig-value small{font-size:13px;font-weight:600;color:var(--text-2);margin-left:3px}
 .sig-sub{font-size:12px;color:var(--text-2);line-height:1.4}
 .sig-sub b{color:var(--text);font-weight:600}
@@ -193,3 +194,5 @@ footer .copy{margin-top:6px;color:var(--text-2)}
   .controls input[type=date]{padding:7px 4px;font-size:12px}
   .controls .btn.icon{width:32px}
 }
+
+.sources .chip{white-space:normal;border-radius:12px}

@@ -1,4 +1,4 @@
-# DE Power Desk v5.8
+# DE Power Desk v5.9
 
 Ein Intraday-Dashboard für den deutschen Strommarkt auf Basis von ENTSO-E-Daten, optional ergänzt um netztransparenz.de. Es läuft mit FastAPI und lokal gebündeltem Plotly und wird auf Render mit Docker betrieben.
 
@@ -18,6 +18,45 @@ Demo Website: https://de-power-desk.onrender.com/
 | **Systembilanz / reBAP** | Systembilanz in MW (+ lang, − kurz; A86, die jüngsten Viertelstunden vorläufig von netztransparenz), reBAP (A85), aFRR/mFRR | Ob das System gerade kurz oder lang ist |
 
 Die Markierung „bullish/bearish“ ist eine einfache Desk-Heuristik: EE-Abweichung ab ±300 MW, Residuallast ab ±500 MW, Kraftwerks-Δ ab ±300 MW. Sie ist keine Handelsempfehlung.
+
+## Neu in v5.9: eine späte Regelzone friert die Seite nicht mehr ein
+
+**Anlass.** ENTSO-E veröffentlicht die Deutschland-Summe für Erzeugung (A75) und Last (A65) erst, wenn alle vier Regelzonen geliefert haben. Am 26.10.2026 fehlte Amprions Solar-Ist von Mitternacht bis mindestens zum frühen Nachmittag, am 10.11.2026 lieferte Amprion ab 09:45 nichts mehr: Solar, Wind Onshore, Last und Residuallast standen über fünf Stunden still, während 50Hertz, TenneT und TransnetBW unter einer Stunde alt waren. Die Statusleiste meldete dabei „Alle Quellen vollständig“.
+
+- **Warnung statt grünem Haken.** `quality` sagt nur, ob Reihen vorhanden sind. Neu ist `freshness.stale`: Sind die offiziellen Ist-Werte am laufenden Tag älter als 90 Minuten (`STALE_ACTUAL_MINUTES`), wird die Statusleiste gelb und nennt die Regelzone, die fehlt, samt Uhrzeit. Bei den Grenzflüssen stehen die Grenzen ohne aktuelle Werte in der Kachel.
+- **Überbrückung (`app/gapfill.py`).** Die Deutschland-Summe ist exakt die Summe der vier Regelzonen (20.10.–09.11.2026, 2020 Viertelstunden, A75 Solar/Onshore/Offshore und A65, Ist und Day-Ahead: maximale Abweichung 0,0 MW). Ist die offizielle Summe älter als 75 Minuten (`GAPFILL_AFTER_MINUTES`), fragt das Desk die Regelzonen einzeln ab. Haben alle geliefert, ist deren Summe der Wert. Fehlt genau eine, wird sie geschätzt; fehlen zwei, bleibt die Lücke.
+- **Schätzung der fehlenden Regelzone.** Wind und Last: ihre eigene Day-Ahead-Prognose plus ihr letzter bekannter Fehler, der mit e^(−h/8 h) abklingt. Bei Wind und Solar übernimmt im selben Maß der Day-Ahead-Fehler der übrigen Regelzonen, skaliert auf die Größe der fehlenden; bei der Last nicht, dort überträgt sich der Fehler der Nachbarn nicht (geprüft, schlechter als ohne). Solar mit netztransparenz-Zugang: deren 15-Minuten-„Hochrechnung“ der Regelzone mal das Verhältnis ENTSO-E/Hochrechnung der 24 Stunden vor der Lücke.
+- **Was die netztransparenz-Hochrechnung ist – und was nicht.** Sie enthält nur die von den Netzbetreibern selbst vermarkteten EEG-Mengen, nicht die Gesamterzeugung: bei Solar je nach Regelzone 26–68 % (Verhältnis ENTSO-E/Hochrechnung im Median 1,5–3,9; bei Amprion an 21 Tagen zwischen 1,48 und 1,68; r > 0,996 je Viertelstunde), bei Wind rund 1 %. Als Ersatz für die Summe taugt sie nicht, als Echtzeit-Form für die Solarerzeugung einer Regelzone schon. Für Wind ist sie unbrauchbar (RMSE 0,8–1,0 GW, schlechter als die Prognose).
+- **Kennzeichnung.** Offizielle Reihen bleiben unverändert (`… Actual`); die überbrückten Viertelstunden stehen getrennt in `… Actual Fill`. In der Oberfläche: gepunktete Fortsetzung der Ist-Linie, hellere Balken auf grauem Band, „≈“ und „Amprion geschätzt“ in der Kachel, ein Hinweis unter dem Diagramm. Kennzahlen `kpi.estimated`, `kpi.official_as_of`, `freshness.filled_through` und der Block `gapfill` (wer fehlt seit wann, Verfahren je Technologie). Der offizielle Wert ersetzt den vorläufigen, sobald er da ist.
+- **Sicherungen.** Vor jeder Überbrückung müssen die Regelzonen an der jüngsten gemeinsamen Viertelstunde die offizielle Summe treffen (±0,2 %); sonst fehlt eine Regelzone schon länger als das Abfragefenster und es wird nichts gebildet. Eine fehlgeschlagene Abfrage zählt nie als „nicht geliefert“. Scheitert die Überbrückung an ENTSO-E, gilt die letzte gelungene bis zu 30 Minuten weiter. Nach 24 Stunden Funkstille wird nicht mehr geschätzt. Vergangene Tage werden nie überbrückt.
+- **Kosten.** Nur solange die Summe hängt: 4 Abfragen (Regelzonen) plus 1 je fehlender Regelzone (ihre Prognose) je Panel und Aktualisierung, mit Zugang 1 Abfrage bei netztransparenz. `GAPFILL=0` schaltet die Überbrückung ab; die Warnung bleibt.
+
+**Rückrechnung** (`scripts/gapfill_backtest.py`, 20.10.–09.11.2026): Für jede Regelzone, jede Technologie und 455 Lückenbeginne (stündlich) werden die Werte der Regelzone ausgeblendet und die Summe mit demselben Code wie im Betrieb neu gebildet. RMSE der Deutschland-Summe in MW nach Stunden Funkstille; „Signal“ ist die Streuung des echten Day-Ahead-Fehlers, also der Größe, die die Kachel zeigt.
+
+| Ausgeblendet | Größe | Verfahren | 1 h | 2 h | 4 h | 6 h | 12 h | 24 h | Signal |
+|---|---|---|---:|---:|---:|---:|---:|---:|---:|
+| Amprion | Solar (Tagstunden) | netztransparenz × Verhältnis | 202 | 211 | 221 | 226 | 226 | 220 | 1856 |
+| Amprion | Solar (Tagstunden) | ohne netztransparenz | 346 | 544 | 675 | 664 | 674 | 685 | 1856 |
+| Amprion | Wind Onshore | Prognose + Fehler | 221 | 335 | 448 | 493 | 534 | 538 | 1684 |
+| Amprion | Last | Prognose + Fehler | 830 | 877 | 992 | 1041 | 1126 | 1184 | 1778 |
+| Amprion | **Wind + Solar** | zusammen | 253 | 353 | 455 | 499 | 540 | 542 | 2229 |
+| Amprion | **Residuallast** | zusammen | 895 | 986 | 1140 | 1212 | 1306 | 1355 | 2688 |
+| 50Hertz | Wind + Solar | zusammen | 322 | 451 | 566 | 604 | 607 | 607 | 2229 |
+| TenneT | Wind + Solar | zusammen | 521 | 743 | 954 | 1037 | 1045 | 1062 | 2229 |
+| TransnetBW | Wind + Solar | zusammen | 130 | 153 | 172 | 176 | 174 | 167 | 2229 |
+| 50Hertz | Residuallast | zusammen | 477 | 703 | 940 | 1075 | 1214 | 1276 | 2688 |
+| TenneT | Residuallast | zusammen | 682 | 987 | 1294 | 1458 | 1639 | 1671 | 2688 |
+| TransnetBW | Residuallast | zusammen | 205 | 291 | 377 | 409 | 435 | 450 | 2688 |
+
+Lesart und Grenzen:
+
+- Fehlt Amprion, liegt der Fehler der Wind-und-Solar-Summe bei 11 % (1 h) bis 24 % (24 h) des Signals. Eine Abweichung von 300 MW ist nach vier Stunden Lücke nicht mehr von null zu unterscheiden; eine von 2 GW schon.
+- Die Residuallast ist deutlich gröber (33–50 % des Signals), weil die Last einer Regelzone sich aus den anderen nicht ableiten lässt. Sie ist ein Anhaltspunkt, kein Messwert.
+- Fehlt TenneT (43 % des Onshore-Winds, der größte Teil des Offshore-Winds), ist die Schätzung nach wenigen Stunden kaum besser als die Prognose. Offshore hat nur zwei Regelzonen; dort gibt es keinen Quervergleich.
+- Die Stichprobe sind drei Herbstwochen. Regeln Direktvermarkter Solar bei negativen Preisen ab, während die fest vergüteten Anlagen weiterlaufen, verschiebt sich das Verhältnis zur netztransparenz-Hochrechnung. Das kommt vor allem im Sommer vor und ist hier nicht geprüft.
+- Die Tabelle ist in-sample: An dieser Stichprobe gewählt wurden die Abklingzeit (8 h aus 2/4/8 h) und das Verfahren je Größe (Quervergleich bei Wind und Solar ja, bei Last nein; netztransparenz bei Solar ja, bei Wind nein). Auf neuen Daten ist mit etwas größeren Fehlern zu rechnen.
+
+Tests: 28 neue in `tests/test_v59.py` (Schätzer, Sicherungen, beide Panels gegen ein nachgebautes ENTSO-E, Rückfall bei Fehlern).
 
 ## Neu in v5.8
 
@@ -132,15 +171,16 @@ python -m uvicorn app.main:app --port 8000
 
 ```bash
 pip install -r requirements-dev.txt
-python -m unittest discover -s tests -v                                  # offline, 166 Tests
+python -m unittest discover -s tests -v                                  # offline, 194 Tests
 python scripts/live_smoke.py --env-file .env --day 2026-09-22            # echter ENTSO-E-Abgleich
 python scripts/ntp_check.py --day 2026-09-22                             # netztransparenz.de-Zugang prüfen
+python scripts/gapfill_backtest.py --start 2026-10-20 --end 2026-11-10 --cache /tmp/gapfill   # Rückrechnung der Überbrückung (v5.9)
 python scripts/smoke_http.py --base-url https://de-power-desk.onrender.com --day 2026-09-22 --user … --password …
 ```
 
 ## Datenquellen und Grenzen
 
-- **EE, Last:** DE Member State (10Y1001A1001A83F). A75/A16 Ist, A69 A01/A40/A18, A65 A16/A01. Residuallast = Last − Solar − Wind; Biomasse und Laufwasser zählen nicht dazu.
+- **EE, Last:** DE Member State (10Y1001A1001A83F). A75/A16 Ist, A69 A01/A40/A18, A65 A16/A01. Residuallast = Last − Solar − Wind; Biomasse und Laufwasser zählen nicht dazu. Hängt die Summe an einer Regelzone, kommen dieselben Dokumente je Regelzone hinzu (50Hertz, Amprion, TenneT, TransnetBW), siehe v5.9.
 - **Grenzen:** DE-LU gegenüber 11 Nachbarn. A11 physisch, A09 A01 (DA) und A09 A05 (Gesamt). Eine Summe wird nur gebildet, wenn alle Grenzen zur selben Viertelstunde Daten haben.
 - **Kraftwerke:** A80 und A77 für DE-LU, FR, NL, BE; die neueste Revision zählt, Stornierungen werden entfernt, pro Einheit gilt die größte Einschränkung. Die Veränderung über 24 h vergleicht beide Zeitpunkte mit dem heutigen Wissensstand. „Neu oder geändert“ richtet sich nach dem `createdDateTime` der Meldung.
 - **Regelenergie:** A86 = Bilanz D nach TR 17.1.H (DDD v3r4: D > 0 Überschuss, D < 0 Defizit), nur businessType A19; `flowDirection` A01 = Überschuss, A02 = Defizit, A03 = ausgeglichen. Das Vorzeichen wurde zusätzlich an Live-Daten vom 22.09.2026 geprüft (r = −0,65 mit dem Netto-aFRR-Abruf; negativ heißt kurz). reBAP am selben Tag ist vorläufig. Beim NRV-Saldo gilt die deutsche Konvention: positiv heißt Unterdeckung. Die Anbindung an netztransparenz.de folgt der offiziellen API-Dokumentation (v1.14) und erkennt die URL-Form selbst. `scripts/ntp_check.py` prüft den Zugang, siehe DEPLOY-RENDER.md.

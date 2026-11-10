@@ -12,7 +12,7 @@
   <!-- Stored theme and language before first paint (no flash). Language: stored
        choice, else the browser language (German -> de, anything else -> en). -->
   <script>try{var d=document.documentElement,t=localStorage.getItem('dpd-theme'),l=localStorage.getItem('dpd-lang');d.dataset.theme=(t==='light'||t==='dark')?t:(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark');d.lang=(l==='de'||l==='en')?l:(/^de\b/i.test(navigator.language||'de')?'de':'en');}catch(e){}</script>
-  <link rel="stylesheet" href="/static/style.css?v=5.8.0" />
+  <link rel="stylesheet" href="/static/style.css?v=5.9.0" />
   <script src="/static/plotly.min.js?v=3.3.1"></script>
 </head>
 <body data-refresh="__REFRESH_SECONDS__">
@@ -92,6 +92,7 @@
       <div class="chead"></div><div class="chart" id="chRes"></div>
       <div class="chead"></div><div class="chart" id="chResDiff"></div>
       <div class="metrics" id="mRes"></div>
+      <div class="sources" id="srcRes"></div>
       <details class="method">
         <summary><span data-lang="de">Quellen &amp; Methodik</span><span data-lang="en">Sources &amp; methodology</span></summary>
         <ul data-lang="de">
@@ -99,12 +100,14 @@
           <li><b>Day-Ahead:</b> Prognose vom Vortag, 18:00 (ENTSO-E A69, Prozess A01) – das, was die Day-Ahead-Auktion eingepreist hat.</li>
           <li><b>Intraday 08:00:</b> Prognosestand am Liefertag um 08:00 (A69, A40).</li>
           <li><b>Laufend:</b> jüngste Prognose (A69, A18). Aus ihr kommt die Revision für die nächsten vier Stunden.</li>
+          <li><b>Vorläufig:</b> ENTSO-E veröffentlicht die Deutschland-Summe erst, wenn alle vier Regelzonen geliefert haben. Fehlt eine länger als 75 Minuten, bildet das Desk die Summe selbst: gemeldete Regelzonen plus Schätzung der fehlenden (gepunktete Linie, hellere Balken, „≈“ in der Kachel). Wind: Day-Ahead-Prognose der Regelzone plus ihr letzter bekannter Fehler, der über rund 8 Stunden in den Prognosefehler der übrigen Regelzonen übergeht. Solar, mit netztransparenz-Zugang: deren 15-Minuten-Hochrechnung der Regelzone mal das Verhältnis der letzten 24 Stunden. Rückrechnung 20.10.–09.11.2026 mit ausgeblendeter Regelzone Amprion: Fehler der Wind-und-Solar-Summe (RMSE) 0,25 GW nach 1 h, 0,45 GW nach 4 h, 0,55 GW nach 24 h – bei 2,2 GW Day-Ahead-Fehler. Der offizielle Wert ersetzt den vorläufigen automatisch.</li>
         </ul>
         <ul data-lang="en">
           <li><b>Actual:</b> generation per quarter-hour (ENTSO-E A75). The latest values are TSO extrapolations that are later replaced by metered data, which is why the tile above also shows the 1-hour mean.</li>
           <li><b>Day-ahead:</b> forecast of the previous day, 18:00 (ENTSO-E A69, process A01) – what the day-ahead auction priced in.</li>
           <li><b>Intraday 08:00:</b> forecast as of 08:00 on the delivery day (A69, A40).</li>
           <li><b>Latest:</b> most recent forecast (A69, A18). The revision for the next four hours is based on it.</li>
+          <li><b>Preliminary:</b> ENTSO-E publishes the German total only once all four control areas have delivered. If one is more than 75 minutes late, the desk builds the total itself: the reporting control areas plus an estimate of the missing one (dotted line, lighter bars, “≈” in the tile). Wind: the area's day-ahead forecast plus its last known error, which fades over about 8 hours into the forecast error of the other areas. Solar, with netztransparenz access: their 15-minute extrapolation for the area times the ratio of the last 24 hours. Backtest 20 Oct–9 Nov 2026 with the Amprion area hidden: error of the wind-and-solar total (RMSE) 0.25 GW after 1 h, 0.45 GW after 4 h, 0.55 GW after 24 h – against a day-ahead error of 2.2 GW. The official value replaces the preliminary one automatically.</li>
         </ul>
       </details>
     </article>
@@ -119,17 +122,20 @@
       <div class="chead"></div><div class="chart" id="chLoad"></div>
       <div class="chead"></div><div class="chart" id="chLoadDiff"></div>
       <div class="metrics" id="mLoad"></div>
+      <div class="sources" id="srcLoad"></div>
       <details class="method">
         <summary><span data-lang="de">Quellen &amp; Methodik</span><span data-lang="en">Sources &amp; methodology</span></summary>
         <ul data-lang="de">
           <li><b>Last:</b> Ist und Day-Ahead-Prognose (ENTSO-E A65).</li>
           <li><b>Residuallast</b> = Last − Solar − Wind. Das Ist entsteht aus den Ist-Werten, die Prognose aus den Day-Ahead-Prognosen (A65, A69). Verglichen wird immer Day-Ahead mit Day-Ahead.</li>
           <li><b>Balken:</b> Residuallast Ist − Day-Ahead. Positiv heißt: Konventionelle Kraftwerke und Importe mussten mehr liefern als eingeplant.</li>
+          <li><b>Vorläufig:</b> Fehlt eine Regelzone bei ENTSO-E, wird ihre Last geschätzt: ihre Day-Ahead-Lastprognose plus ihr letzter bekannter Fehler, über rund 8 Stunden abklingend. Das ist gröber als bei Wind und Solar. Rückrechnung 20.10.–09.11.2026 mit ausgeblendeter Regelzone Amprion: Fehler der Residuallast (RMSE) 0,9 GW nach 1 h, 1,1 GW nach 4 h, 1,35 GW nach 24 h – bei 3,1 GW Day-Ahead-Fehler.</li>
         </ul>
         <ul data-lang="en">
           <li><b>Load:</b> actual and day-ahead forecast (ENTSO-E A65).</li>
           <li><b>Residual load</b> = load − solar − wind. The actual is built from actual values, the forecast from the day-ahead forecasts (A65, A69). Day-ahead is always compared with day-ahead.</li>
           <li><b>Bars:</b> residual load actual − day-ahead. Positive means conventional plants and imports had to supply more than planned.</li>
+          <li><b>Preliminary:</b> if a control area is missing on ENTSO-E, its load is estimated: its day-ahead load forecast plus its last known error, fading over about 8 hours. This is coarser than for wind and solar. Backtest 20 Oct–9 Nov 2026 with the Amprion area hidden: error of the residual load (RMSE) 0.9 GW after 1 h, 1.1 GW after 4 h, 1.35 GW after 24 h – against a day-ahead error of 3.1 GW.</li>
         </ul>
       </details>
     </article>
@@ -242,6 +248,6 @@
     <div class="copy">© <span id="year">2026</span> Kaan Akdere · DE Power Desk</div>
   </footer>
 </main>
-<script src="/static/app.js?v=5.8.0"></script>
+<script src="/static/app.js?v=5.9.0"></script>
 </body>
 </html>
