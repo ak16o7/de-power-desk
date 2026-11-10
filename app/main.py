@@ -30,10 +30,10 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
-from app import ntp
+from app import gapfill, ntp
 from app.quality import classify_notice, outage_breakdown, panel_quality
 
-VERSION = "5.8.0"
+VERSION = "5.9.0"
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR.parent / ".env")
 
@@ -116,7 +116,7 @@ DEFAULT_NEIGHBORS = list(ALL_NEIGHBORS)
 BALANCING_AREAS = ["50HERTZ", "AMPRION", "TENNET_DE", "TRANSNETBW"]
 
 SESSION = requests.Session()
-SESSION.headers.update({"User-Agent": "entsoe-desk/5.8 (+desk dashboard)"})
+SESSION.headers.update({"User-Agent": "entsoe-desk/5.9 (+desk dashboard)"})
 # The UI loads all panels at once (up to ~50 concurrent upstream calls: borders 12,
 # outages 8, balancing 2x8 + 4 ...); the default pool of 10 made
 # urllib3 discard and re-handshake connections under load.
@@ -753,6 +753,133 @@ def cached(key: str, ttl: int, force: bool, fn):
                     CACHE_LOCKS.pop(key, None)
 
 
+# v5.9: one late control area must not freeze the German totals (app/gapfill.py).
+# GAPFILL=0 returns exactly to v5.8 behaviour.
+GAPFILL = os.getenv("GAPFILL", "1").strip().lower() not in ("0", "false", "no", "off")
+GAPFILL_AFTER_MINUTES = int(os.getenv("GAPFILL_AFTER_MINUTES", "75"))
+# Official actuals older than this on the live day turn the status bar yellow.
+STALE_ACTUAL_MINUTES = int(os.getenv("STALE_ACTUAL_MINUTES", "90"))
+QH = timedelta(minutes=15)
+
+
+def behind(official: dict[datetime, float], start: datetime, d: Date, now: datetime | None = None) -> bool:
+    """Live day only: the newest official MTU ended more than GAPFILL_AFTER_MINUTES ago."""
+    now = now or datetime.now(BERLIN)
+    if not GAPFILL or d != now.date():
+        return False
+    newest_end = max(official) + QH if official else start
+    return now - newest_end > timedelta(minutes=GAPFILL_AFTER_MINUTES)
+
+
+def _area_documents(params_for, start: datetime, end: datetime) -> dict[str, list[dict[str, Any]]]:
+    """The same document for each German control area, in parallel.
+
+    A failed request raises: an area whose request failed must never look
+    like an area that has not delivered."""
+    def one(area: str) -> list[dict[str, Any]]:
+        try:
+            return parse_timeseries(entsoe_request(params_for(AREAS[area]), start, end))
+        except LookupError:
+            return []
+    with ThreadPoolExecutor(max_workers=len(BALANCING_AREAS)) as pool:
+        return dict(zip(BALANCING_AREAS, pool.map(one, BALANCING_AREAS)))
+
+
+def _rows_or_empty(params: dict[str, Any], start: datetime, end: datetime) -> list[dict[str, Any]]:
+    try:
+        return parse_timeseries(entsoe_request(params, start, end))
+    except LookupError:
+        return []
+
+
+def bridge_totals(late: dict[str, tuple[dict[datetime, float], dict[datetime, float]]], start: datetime, end: datetime, d: Date, *,
+                  kind: str, pick, area_params, total_params, forecast_params, cross: bool, floor: float | None,
+                  proxy_for=None) -> dict[str, dict[str, Any]]:
+    """gapfill.fill() for every series in `late` (name -> official today, German day-ahead today).
+
+    Costs 4 requests (the control areas, yesterday and today) plus one per
+    lagging area (its day-ahead forecast); yesterday's German total is cached
+    for an hour. pick(rows, name) extracts one series from parsed rows."""
+    lo = start - timedelta(days=1)
+    rows = _area_documents(area_params, lo, end)
+    previous = cached(f"gapfill:{kind}:prev:{d.isoformat()}", 3600, False, lambda: _rows_or_empty(total_params, lo, start))
+    forecasts: dict[str, list[dict[str, Any]]] = {}
+    out: dict[str, dict[str, Any]] = {}
+    for name, (official, day_ahead) in late.items():
+        by_area = {a: pick(rows[a], name, False) for a in BALANCING_AREAS}
+        lagging = gapfill.lagging_areas({a: gapfill.last_time(s) for a, s in by_area.items() if s})
+        for area in lagging:
+            if area not in forecasts:
+                forecasts[area] = _rows_or_empty(forecast_params(AREAS[area]), lo, end)
+        proxy = None
+        if proxy_for and lagging:
+            try:
+                proxy = proxy_for(name, lo, end)
+            except Exception as e:  # optional source: fall back to the anchored estimate
+                log_upstream(f"gapfill proxy {name}", e)
+        res = gapfill.fill({**pick(previous, name, False), **official}, by_area,
+                           {area: pick(forecasts[area], name, True) for area in lagging}, day_ahead, start, end,
+                           cross=cross, proxy_by_area=proxy, floor=floor)
+        res["lagging"] = lagging
+        out[name] = res
+    return out
+
+
+BRIDGE_KEEP_SECONDS = 1800
+
+
+def bridge_or_last(kind: str, d: Date, fn) -> tuple[dict[str, dict[str, Any]], str | None]:
+    """Run the bridge; if it fails, reuse the last good one for up to 30 min.
+
+    The bridge needs 5-6 answers from ENTSO-E. On a day when a control area
+    is late the API is often slow as well (10.11.2026: gateway time-outs), and
+    without this the tiles would flip between "74 min old, estimated" and
+    "5 h old, official" from one refresh to the next. A reused bridge is not
+    extended; official values always win over it (see callers)."""
+    key = f"gapfill:{kind}:last:{d.isoformat()}"
+    try:
+        return CACHE.set(key, fn(), BRIDGE_KEEP_SECONDS), None
+    except Exception as e:  # the official view must never depend on the bridge
+        log_upstream(f"gapfill {kind}", e)
+        last = CACHE.get(key)
+        return (last, "kept") if last is not None else ({}, "error")
+
+
+def gap_info(results: dict[str, dict[str, Any]], filled: dict[datetime, float], merge: dict[str, Any] | None = None) -> dict[str, Any]:
+    """What the UI needs: who lags since when, what is estimated and how."""
+    lagging: dict[str, str | None] = dict((merge or {}).get("lagging") or {})
+    for res in results.values():
+        for area, t in res.get("lagging", {}).items():
+            iso = t.isoformat() if t else None
+            if area not in lagging or iso is None or (lagging[area] is not None and iso < lagging[area]):
+                lagging[area] = iso
+    areas = set((merge or {}).get("estimated_areas") or [])
+    methods: dict[str, str] = dict((merge or {}).get("methods") or {})
+    for name, res in results.items():
+        areas |= set(res["missing"].values())
+        if res["methods"]:
+            methods[name] = "+".join(sorted(set(res["methods"].values())))
+    return {
+        "state": "filled" if filled else "lagging",
+        "lagging": lagging,
+        "estimated_areas": sorted(areas),
+        "methods": methods,
+        "since": min(filled).isoformat() if filled else None,
+        "through": max(filled).isoformat() if filled else None,
+    }
+
+
+def _gen_pick(rows: list[dict[str, Any]], name: str, forecast: bool) -> dict[datetime, float]:
+    code = next(c for c, n in PSR.items() if n == name)
+    return series(rows, code) if forecast else series(rows, code, consumption=False)
+
+
+def _solar_proxy(name: str, lo: datetime, end: datetime) -> dict[str, dict[datetime, float]] | None:
+    if name != "Solar" or not ntp.configured():
+        return None
+    return ntp.fetch_hochrechnung("Solar", lo, min(end, datetime.now(UTC) + QH))
+
+
 def fetch_renewables(day: str | None, force: bool = False) -> dict[str, Any]:
     start, end, d = day_bounds(day)
     key = cache_key("renewables", d)
@@ -826,6 +953,32 @@ def fetch_renewables(day: str | None, force: bool = False) -> dict[str, Any]:
 
         res_actual = add_series_complete(*actual_parts)
         res_da = add_series_complete(*da_parts)
+
+        # v5.9: MTUs the German total lacks because one control area is late.
+        # "<name> Actual" stays official-only; the bridged MTUs are separate
+        # "... Fill" series, and the KPIs use official + fill.
+        names = list(PSR.values())
+        fills: dict[str, dict[str, Any]] = {}
+        gap: dict[str, Any] = {"state": "not_needed" if GAPFILL else "off"}
+        late = {name: (actual, day_ahead) for name, actual, day_ahead in zip(names, actual_parts, da_parts) if behind(actual, start, d)}
+        if late:
+            fills, problem = bridge_or_last("gen", d, lambda: bridge_totals(
+                late, start, end, d, kind="gen", pick=_gen_pick, cross=True, floor=0.0, proxy_for=_solar_proxy,
+                area_params=lambda eic: {"documentType": "A75", "processType": "A16", "in_Domain": eic},
+                total_params={"documentType": "A75", "processType": "A16", "in_Domain": AREAS["DE"]},
+                forecast_params=lambda eic: {"documentType": "A69", "processType": "A01", "in_Domain": eic}))
+            if problem == "error":
+                gap = {"state": "error"}
+        # Official values always win, also over a bridge kept from an earlier refresh.
+        tech_fill = {name: {t: v for t, v in fills.get(name, {}).get("values", {}).items() if t not in actual}
+                     for name, actual in zip(names, actual_parts)}
+        full_parts = [{**tech_fill[name], **actual} for name, actual in zip(names, actual_parts)]
+        res_full = add_series_complete(*full_parts)
+        res_fill = {t: v for t, v in res_full.items() if t not in res_actual}
+        if fills:
+            gap = gap_info(fills, res_fill)
+        for name in names:
+            payload["series"][f"{name} Actual Fill"] = as_points(tech_fill[name])
         res_intraday = add_series_complete(*intraday_parts)
         res_current = add_series_complete(*current_parts)
         res_live = res_current or res_intraday or res_da
@@ -837,6 +990,10 @@ def fetch_renewables(day: str | None, force: bool = False) -> dict[str, Any]:
         # separately, never mixed into the headline.
         miss_da = subtract_series(res_actual, res_da)
         miss_id = subtract_series(res_actual, res_intraday)
+        miss_da_fill = subtract_series(res_fill, res_da)
+        miss_id_fill = subtract_series(res_fill, res_intraday)
+        miss_da_all = {**miss_da, **miss_da_fill}
+        miss_id_all = {**miss_id, **miss_id_fill}
         forecast_revision = subtract_series(res_current, res_da)
 
         payload["series"].update(
@@ -849,17 +1006,20 @@ def fetch_renewables(day: str | None, force: bool = False) -> dict[str, Any]:
                 "RES Forecast Error": as_points(miss_da),
                 "RES Forecast Error ID": as_points(miss_id),
                 "RES Forecast Revision": as_points(forecast_revision),
+                "RES Actual Fill": as_points(res_fill),
+                "RES Forecast Error Fill": as_points(miss_da_fill),
             }
         )
-        miss_point = latest_point(miss_da)
-        id_point = point_at_or_before(miss_id, miss_point[0], timedelta(0)) if miss_point else None
+        official_point = latest_point(miss_da)
+        miss_point = latest_point(miss_da_all)
+        id_point = point_at_or_before(miss_id_all, miss_point[0], timedelta(0)) if miss_point else None
         tech_error: dict[str, float | None] = {}
-        for (code, name), actual, day_ahead in zip(PSR.items(), actual_parts, da_parts):
+        for (code, name), actual, day_ahead in zip(PSR.items(), full_parts, da_parts):
             if miss_point and miss_point[0] in actual and miss_point[0] in day_ahead:
                 tech_error[name] = round(actual[miss_point[0]] - day_ahead[miss_point[0]], 1)
             else:
                 tech_error[name] = None
-        day_so_far = [v for t, v in miss_da.items() if not miss_point or t <= miss_point[0]]
+        day_so_far = [v for t, v in miss_da_all.items() if not miss_point or t <= miss_point[0]]
 
         now = datetime.now(BERLIN)
         forward: dict[datetime, float] = {}
@@ -869,7 +1029,7 @@ def fetch_renewables(day: str | None, force: bool = False) -> dict[str, Any]:
         rest_of_day = {t: v for t, v in forecast_revision.items() if t >= now} if d == now.date() else {}
         revision_avg = statistics.mean(forward.values()) if forward else None
 
-        err_1h = trailing_mean(miss_da, miss_point[0]) if miss_point else None
+        err_1h = trailing_mean(miss_da_all, miss_point[0]) if miss_point else None
         payload["kpi"] = {
             "res_error_mw": round(miss_point[1], 1) if miss_point else None,
             "res_error_1h_mw": round(err_1h, 1) if err_1h is not None else None,
@@ -879,7 +1039,10 @@ def fetch_renewables(day: str | None, force: bool = False) -> dict[str, Any]:
             "tech_error_mw": tech_error,
             "day_avg_error_mw": round(statistics.mean(day_so_far), 1) if day_so_far else None,
             "day_mae_mw": round(statistics.mean(abs(v) for v in day_so_far), 1) if day_so_far else None,
-            "changes": change_windows(miss_da),
+            "changes": change_windows(miss_da_all),
+            # v5.9: the headline MTU is bridged (control-area sum, possibly with one estimated area).
+            "estimated": bool(miss_point and miss_point[0] in res_fill),
+            "official_as_of": official_point[0].isoformat() if official_point else None,
             "next4h_revision_avg_mw": round(revision_avg, 1) if revision_avg is not None else None,
             "next4h_revision_min_mw": round(min(forward.values()), 1) if forward else None,
             "next4h_revision_max_mw": round(max(forward.values()), 1) if forward else None,
@@ -888,7 +1051,8 @@ def fetch_renewables(day: str | None, force: bool = False) -> dict[str, Any]:
             "next4h_window_end": (max(forward) + timedelta(minutes=15)).isoformat() if forward else None,
             "rest_of_day_revision_avg_mw": round(statistics.mean(rest_of_day.values()), 1) if rest_of_day else None,
         }
-        payload["freshness"] = {"actual_through": latest_timestamp(res_actual)}
+        payload["freshness"] = {"actual_through": latest_timestamp(res_actual), "filled_through": latest_timestamp(res_fill)}
+        payload["gapfill"] = gap
         return payload
 
     return cached(key, ttl_for(d, CACHE_SECONDS), force, work)
@@ -915,10 +1079,38 @@ def fetch_load(day: str | None, force: bool = False) -> dict[str, Any]:
         residual_actual = subtract_series(actual, res_actual)
         residual_da = subtract_series(forecast, res_da)
         surprise = subtract_series(residual_actual, residual_da)
-        rp = latest_point(residual_actual)
-        sp = latest_point(surprise)
-        surprise_1h = trailing_mean(surprise, sp[0]) if sp else None
-        lp = latest_point(subtract_series(actual, forecast))
+
+        # v5.9: bridge a late control area (see fetch_renewables). Official
+        # series stay official-only; "... Fill" holds the bridged MTUs.
+        load_fill: dict[datetime, float] = {}
+        gap: dict[str, Any] = {"state": "not_needed" if GAPFILL else "off"}
+        results: dict[str, dict[str, Any]] = {}
+        if behind(actual, start, d):
+            results, problem = bridge_or_last("load", d, lambda: bridge_totals(
+                {"Load": (actual, forecast)}, start, end, d, kind="load", cross=False, floor=None,
+                pick=lambda rows, name, is_forecast: series(rows),
+                area_params=lambda eic: {"documentType": "A65", "processType": "A16", "outBiddingZone_Domain": eic},
+                total_params={"documentType": "A65", "processType": "A16", "outBiddingZone_Domain": AREAS["DE"]},
+                forecast_params=lambda eic: {"documentType": "A65", "processType": "A01", "outBiddingZone_Domain": eic}))
+            if problem == "error":
+                gap = {"state": "error"}
+            load_fill = {t: v for t, v in results.get("Load", {}).get("values", {}).items() if t not in actual}
+        load_full = {**load_fill, **actual}
+        res_full = {**res_actual, **{parse_dt(p["t"]): p["v"] for p in rs.get("RES Actual Fill", [])}}
+        residual_full = subtract_series(load_full, res_full)
+        residual_fill = {t: v for t, v in residual_full.items() if t not in residual_actual}
+        surprise_fill = subtract_series(residual_fill, residual_da)
+        surprise_all = {**surprise, **surprise_fill}
+        ren_gap = ren.get("gapfill") or {}
+        if results or residual_fill:
+            gap = gap_info(results, residual_fill, merge=ren_gap if ren_gap.get("state") in ("filled", "lagging") else None)
+        elif gap["state"] == "not_needed" and ren_gap.get("state") in ("lagging", "error"):
+            gap = dict(ren_gap)  # the residual load is stale because the renewables are
+
+        rp = latest_point(residual_full)
+        sp = latest_point(surprise_all)
+        surprise_1h = trailing_mean(surprise_all, sp[0]) if sp else None
+        lp = latest_point(subtract_series(load_full, forecast))
         return {
             "date": d.isoformat(),
             "updated": datetime.now(BERLIN).isoformat(),
@@ -929,6 +1121,9 @@ def fetch_load(day: str | None, force: bool = False) -> dict[str, Any]:
                 "Residual Load Actual": as_points(residual_actual),
                 "Residual Load Forecast": as_points(residual_da),
                 "Residual Load Surprise": as_points(surprise),
+                "Load Actual Fill": as_points(load_fill),
+                "Residual Load Actual Fill": as_points(residual_fill),
+                "Residual Load Surprise Fill": as_points(surprise_fill),
             },
             "kpi": {
                 "residual_load_mw": round(rp[1], 1) if rp else None,
@@ -938,10 +1133,15 @@ def fetch_load(day: str | None, force: bool = False) -> dict[str, Any]:
                 "surprise_as_of": sp[0].isoformat() if sp else None,
                 "forecast_basis": "day-ahead load − day-ahead RES",
                 "load_error_mw": round(lp[1], 1) if lp else None,
-                "day_avg_surprise_mw": round(statistics.mean(v for t, v in surprise.items() if t <= sp[0]), 1) if sp else None,
-                "changes": change_windows(residual_actual),
+                "day_avg_surprise_mw": round(statistics.mean(v for t, v in surprise_all.items() if t <= sp[0]), 1) if sp else None,
+                "changes": change_windows(residual_full),
+                "estimated": bool(sp and sp[0] in residual_fill),
+                "official_as_of": latest_timestamp(surprise),
             },
-            "freshness": {"actual_through": latest_timestamp(actual)},
+            # The residual load is only as fresh as its older input.
+            "freshness": {"actual_through": latest_timestamp(actual), "residual_through": latest_timestamp(residual_actual),
+                          "filled_through": latest_timestamp(residual_fill)},
+            "gapfill": gap,
         }
 
     return cached(key, ttl_for(d, CACHE_SECONDS), force, work)
@@ -1102,7 +1302,13 @@ def fetch_borders(day: str | None, neighbors: list[str], force: bool = False) ->
             "scheduled_borders": [n for n in neighbors if n in nets["scheduled"]],
             "total_borders": [n for n in neighbors if n in nets["total"]],
         }
-        result["freshness"] = {"physical_through": latest_timestamp(totals_phys)}
+        # v5.9: the total needs every border; name the ones that hold it back.
+        border_through = {n: max(nets["physical"][n]) for n in neighbors if nets["physical"].get(n)}
+        newest = max(border_through.values(), default=None)
+        result["freshness"] = {
+            "physical_through": latest_timestamp(totals_phys),
+            "lagging_borders": {n: t.isoformat() for n, t in sorted(border_through.items()) if newest - t > 2 * QH},
+        }
         result["methodology"] = (
             "Positive = import into DE-LU. Intraday-XB = total schedule (A09/A05) - day-ahead schedule (A09/A01). "
             "Physical - total schedule: commercial schedules exclude remedial actions (redispatch/countertrading), "
@@ -2121,9 +2327,34 @@ def api_freshness():
     return {"date": d.isoformat(), "background": REFRESHER.running, "panels": panels}
 
 
+# Official "through" timestamp per panel whose age decides "stale" (v5.9).
+OFFICIAL_THROUGH = {"renewables": "actual_through", "load": "residual_through", "borders": "physical_through"}
+
+
+def staleness(name: str, data: dict[str, Any], now: datetime | None = None) -> dict[str, Any]:
+    """Age of the newest OFFICIAL MTU on the live day, computed per response
+    (the cached panel cannot know how old it is when it is served).
+
+    panel_quality() only says whether the series exist. A panel can be
+    "complete" and five hours old (10.11.2026: Amprion silent since 09:45,
+    status bar green); this is the missing half."""
+    key = OFFICIAL_THROUGH.get(name)
+    now = now or datetime.now(BERLIN)
+    if not key or data.get("date") != now.date().isoformat():
+        return {}
+    through = (data.get("freshness") or {}).get(key)
+    start = day_bounds(data["date"])[0]
+    newest_end = parse_dt(through) + QH if through else start
+    age = max(0, int((now - newest_end).total_seconds() // 60))
+    return {"official_age_min": age, "stale": age > STALE_ACTUAL_MINUTES, "stale_after_min": STALE_ACTUAL_MINUTES}
+
+
 def panel_response(name, fn):
     data = fn()
-    return {**data, "quality": panel_quality(name, data)}
+    out = {**data, "quality": panel_quality(name, data)}
+    if "freshness" in data:
+        out["freshness"] = {**data["freshness"], **staleness(name, data)}
+    return out
 
 
 MIN_DAY = Date(2015, 1, 5)

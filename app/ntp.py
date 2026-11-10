@@ -136,7 +136,10 @@ def _num(raw: str | None) -> float | None:
 def parse_csv(text: str) -> list[dict[str, Any]]:
     """Semicolon CSV: Datum;Zeitzone;von;bis;...;<value columns>. Returns rows
     with a UTC 'ts' (start of the quarter hour) plus the raw columns parsed as
-    floats where possible."""
+    floats where possible.
+
+    The Hochrechnung endpoints use a second layout (live 10.11.2026):
+    Datum;von;Zeitzone von;bis;Zeitzone bis;... with ISO dates (2026-11-10)."""
     lines = [ln for ln in text.splitlines() if ln.strip()]
     if not lines:
         return []
@@ -150,15 +153,17 @@ def parse_csv(text: str) -> list[dict[str, Any]]:
         cells = [c.strip() for c in ln.split(";")]
         if len(cells) < len(header):
             cells += [""] * (len(header) - len(cells))
-        day = datetime.strptime(cells[idx["datum"]], "%d.%m.%Y")
+        raw_day = cells[idx["datum"]]
+        day = datetime.strptime(raw_day, "%Y-%m-%d" if raw_day[:4].isdigit() else "%d.%m.%Y")
         hh, mm = (int(x) for x in cells[idx["von"]].split(":")[:2])
-        tz = cells[idx["zeitzone"]].upper() if "zeitzone" in idx else "UTC"
+        tz_col = "zeitzone" if "zeitzone" in idx else "zeitzone von" if "zeitzone von" in idx else None
+        tz = cells[idx[tz_col]].upper() if tz_col else "UTC"
         if tz not in _OFFSETS:
             raise ValueError(f"netztransparenz: unknown time zone {tz!r}")
         ts = datetime(day.year, day.month, day.day, hh, mm, tzinfo=UTC) - timedelta(hours=_OFFSETS[tz])
         row: dict[str, Any] = {"ts": ts}
         for h, i in idx.items():
-            if h in ("datum", "zeitzone", "von", "bis"):
+            if h in ("datum", "zeitzone", "zeitzone von", "zeitzone bis", "von", "bis"):
                 continue
             row[h] = _num(cells[i]) if h not in ("datenkategorie", "datentyp", "einheit") else cells[i]
         out.append(row)
@@ -249,3 +254,19 @@ def fetch_block(start: datetime, end: datetime, include_rz: bool = False) -> dic
         diag["error"] = str(e)[:200]
         LOG.warning("netztransparenz aep: %s: %s", type(e).__name__, diag["error"])
     return result
+
+
+HOCHRECHNUNG_COLUMNS = {"50HERTZ": "50Hertz (MW)", "AMPRION": "Amprion (MW)", "TENNET_DE": "TenneT TSO (MW)", "TRANSNETBW": "TransnetBW (MW)"}
+
+
+def fetch_hochrechnung(product: str, start: datetime, end: datetime) -> dict[str, dict[datetime, float]]:
+    """15-min 'Hochrechnung' (MW) per control area; product = 'Solar' or 'Wind'.
+
+    NOT total generation: only the EEG volumes the TSOs market themselves.
+    Live 20.10.-09.11.2026 against ENTSO-E A75 per control area: solar is
+    26-68 % of the area's total (ENTSO-E / Hochrechnung 1.5-3.9 in the median;
+    Amprion 1.48-1.68 over 21 days; r > 0.996 per MTU), wind about 1 %. Useful only as
+    a real-time shape for an area whose ENTSO-E solar is missing (gapfill).
+    Raises LookupError without data; other errors propagate."""
+    rows = [r for r in parse_csv(_get(requests.Session(), f"hochrechnung/{product}", start, end)) if start <= r["ts"] < end]
+    return {area: _column(rows, column) for area, column in HOCHRECHNUNG_COLUMNS.items()}
