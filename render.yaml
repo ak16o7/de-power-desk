@@ -2,7 +2,7 @@ services:
   - type: web
     name: de-power-desk
     runtime: docker
-    plan: 0.5c-512mb
+    plan: free
     dockerfilePath: ./Dockerfile
     healthCheckPath: /health
     # Deploy only after the GitHub Actions tests for the commit are green.
